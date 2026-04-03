@@ -47,6 +47,7 @@ input, textarea, select { font: inherit; }
   border-radius: var(--radius);
   font-size: var(--text-base); font-weight: 600;
   transition: opacity .15s, transform .1s;
+  box-sizing: border-box;
 }
 .btn:hover { opacity: .88; }
 .btn:active { transform: scale(.97); }
