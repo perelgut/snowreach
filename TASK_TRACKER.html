@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SnowReach — Task Tracker</title>
+  <style>
+    :root {
+      --blue:       #1A6FDB;
+      --blue-dark:  #0F4FA8;
+      --blue-light: #E8F1FC;
+      --snow:       #F0F6FF;
+      --gray-100:   #F5F7FA;
+      --gray-200:   #E4E8EF;
+      --gray-400:   #9AA5B4;
+      --gray-600:   #4A5568;
+      --gray-800:   #1A202C;
+      --green:      #27AE60;
+      --green-bg:   #EAFAF1;
+      --amber:      #F39C12;
+      --amber-bg:   #FEF9E7;
+      --red:        #E74C3C;
+      --red-bg:     #FDEDEC;
+      --radius:     8px;
+      --shadow:     0 1px 4px rgba(0,0,0,.1);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--gray-100);
+      color: var(--gray-800);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────── */
+    header {
+      background: var(--blue);
+      color: #fff;
+      padding: 18px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(26,111,219,.35);
+    }
+    header .logo { display: flex; align-items: center; gap: 12px; }
+    header .logo svg { width: 36px; height: 36px; }
+    header h1 { font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
+    header .sub { font-size: 12px; opacity: .75; margin-top: 1px; }
+    header .reset-btn {
+      background: rgba(255,255,255,.18);
+      border: 1px solid rgba(255,255,255,.35);
+      color: #fff;
+      padding: 6px 14px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 12px;
+      transition: background .15s;
+    }
+    header .reset-btn:hover { background: rgba(255,255,255,.28); }
+
+    /* ── Summary bar ─────────────────────────────────────────────── */
+    .summary-bar {
+      background: #fff;
+      border-bottom: 1px solid var(--gray-200);
+      padding: 14px 28px;
+      display: flex;
+      gap: 28px;
+      flex-wrap: wrap;
+    }
+    .stat { display: flex; flex-direction: column; }
+    .stat .val { font-size: 22px; font-weight: 700; color: var(--blue); }
+    .stat .lbl { font-size: 11px; color: var(--gray-400); text-transform: uppercase; letter-spacing: .5px; }
+
+    /* ── Main layout ─────────────────────────────────────────────── */
+    main { padding: 24px 28px; max-width: 1080px; }
+
+    /* ── Phase card ──────────────────────────────────────────────── */
+    .phase {
+      background: #fff;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+
+    .phase-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 16px 20px;
+      cursor: pointer;
+      user-select: none;
+      border-bottom: 1px solid var(--gray-200);
+      transition: background .12s;
+    }
+    .phase-header:hover { background: var(--gray-100); }
+
+    .phase-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 20px;
+      letter-spacing: .4px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .phase-env .phase-badge { background: #F3E5F5; color: #6A1B9A; }
+    .phase-env .progress-fill { background: #8E24AA; }
+    .phase-0 .phase-badge { background: #E8EAF6; color: #3949AB; }
+    .phase-1 .phase-badge { background: var(--blue-light); color: var(--blue-dark); }
+    .phase-2 .phase-badge { background: #E8F5E9; color: #2E7D32; }
+    .phase-3 .phase-badge { background: #FFF3E0; color: #E65100; }
+
+    .phase-title { flex: 1; font-weight: 600; font-size: 15px; }
+    .phase-meta { font-size: 12px; color: var(--gray-400); }
+
+    .progress-wrap { display: flex; align-items: center; gap: 10px; min-width: 160px; }
+    .progress-bar {
+      flex: 1;
+      height: 8px;
+      background: var(--gray-200);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width .4s ease;
+    }
+    .phase-0 .progress-fill { background: #5C6BC0; }
+    .phase-1 .progress-fill { background: var(--blue); }
+    .phase-2 .progress-fill { background: var(--green); }
+    .phase-3 .progress-fill { background: #FB8C00; }
+
+    .progress-pct { font-size: 12px; font-weight: 600; color: var(--gray-600); min-width: 32px; text-align: right; }
+
+    .chevron { font-size: 12px; color: var(--gray-400); transition: transform .2s; }
+    .phase.collapsed .chevron { transform: rotate(-90deg); }
+
+    /* ── Task table ──────────────────────────────────────────────── */
+    .task-body { padding: 0 20px 12px; }
+    .phase.collapsed .task-body { display: none; }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--gray-400);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      padding: 6px 10px 6px 0;
+      border-bottom: 1px solid var(--gray-200);
+    }
+    td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--gray-200); vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--gray-100); }
+
+    .task-id {
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--blue);
+      white-space: nowrap;
+    }
+    .task-name { max-width: 480px; }
+    .task-week { color: var(--gray-400); font-size: 12px; white-space: nowrap; }
+    .task-notes { color: var(--gray-600); font-size: 12px; max-width: 280px; }
+
+    /* ── Status pill ─────────────────────────────────────────────── */
+    .status-pill {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity .15s;
+      user-select: none;
+    }
+    .status-pill:hover { opacity: .8; }
+
+    .status-todo    { background: var(--gray-200); color: var(--gray-600); }
+    .status-in-progress { background: var(--amber-bg); color: var(--amber); }
+    .status-done    { background: var(--green-bg); color: var(--green); }
+    .status-blocked { background: var(--red-bg); color: var(--red); }
+
+    /* ── Legend ──────────────────────────────────────────────────── */
+    .legend {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      padding: 10px 28px;
+      background: #fff;
+      border-top: 1px solid var(--gray-200);
+      font-size: 12px;
+      color: var(--gray-600);
+      flex-wrap: wrap;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-note { margin-left: auto; color: var(--gray-400); font-style: italic; }
+
+    @media (max-width: 680px) {
+      header { flex-direction: column; align-items: flex-start; gap: 10px; }
+      .summary-bar { gap: 16px; padding: 12px 16px; }
+      main { padding: 16px; }
+      .phase-header { flex-wrap: wrap; gap: 8px; }
+      .progress-wrap { min-width: 120px; }
+      .task-notes { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 36 36" fill="none">
+      <circle cx="18" cy="18" r="18" fill="rgba(255,255,255,.15)"/>
+      <!-- Snowflake icon -->
+      <line x1="18" y1="6" x2="18" y2="30" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="6" y1="18" x2="30" y2="18" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="9.5" y1="9.5" x2="26.5" y2="26.5" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="26.5" y1="9.5" x2="9.5" y2="26.5" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="18" cy="18" r="3" fill="#fff"/>
+    </svg>
+    <div>
+      <h1>SnowReach</h1>
+      <div class="sub">Development Task Tracker — v1.1 &nbsp;·&nbsp; ENV + 33 weeks &nbsp;·&nbsp; 60 tasks</div>
+    </div>
+  </div>
+  <button class="reset-btn" onclick="resetAll()">Reset All</button>
+</header>
+
+<div class="summary-bar" id="summaryBar">
+  <div class="stat"><span class="val" id="stat-total">0</span><span class="lbl">Total Tasks</span></div>
+  <div class="stat"><span class="val" id="stat-done">0</span><span class="lbl">Done</span></div>
+  <div class="stat"><span class="val" id="stat-prog">0</span><span class="lbl">In Progress</span></div>
+  <div class="stat"><span class="val" id="stat-blocked">0</span><span class="lbl">Blocked</span></div>
+  <div class="stat"><span class="val" id="stat-pct">0%</span><span class="lbl">Complete</span></div>
+</div>
+
+<main id="main"></main>
+
+<div class="legend">
+  <span><strong>Click any status pill</strong> to cycle: To Do → In Progress → Done → Blocked → To Do</span>
+  <span class="legend-item"><span class="status-pill status-todo">To Do</span></span>
+  <span class="legend-item"><span class="status-pill status-in-progress">In Progress</span></span>
+  <span class="legend-item"><span class="status-pill status-done">Done</span></span>
+  <span class="legend-item"><span class="status-pill status-blocked">Blocked</span></span>
+  <span class="legend-note">Progress saved automatically in browser localStorage</span>
+</div>
+
+<script>
+// ── Task data ──────────────────────────────────────────────────────────────
+const PHASES = [
+  {
+    id: 'phase-env',
+    cls: 'phase-env',
+    badge: 'ENV',
+    title: 'Development Environment Setup',
+    weeks: 'Before Week 1',
+    tasks: [
+      { id: 'ENV-01', name: 'Install core development tools (Node.js 20, Java 21, Maven, Git, gcloud, Firebase CLI, Stripe CLI)', week: 'Pre-W1', notes: 'Verify all tools: node -v, java -version, mvn -version, firebase --version' },
+      { id: 'ENV-02', name: 'Create project folder, initialize Git, create .gitignore, initial commit', week: 'Pre-W1', notes: 'git init inside existing snowreach/ folder; comprehensive .gitignore' },
+      { id: 'ENV-03', name: 'Create GitHub repository, link remote, create develop branch, configure branch protection', week: 'Pre-W1', notes: 'Private repo; protect main; add all required GitHub Secrets placeholders' },
+      { id: 'ENV-04', name: 'VS Code setup: install all required extensions, create .vscode/extensions.json and settings.json', week: 'Pre-W1', notes: 'Java Pack, Spring Boot Tools, ESLint, Prettier, GitLens, REST Client, etc.' },
+      { id: 'ENV-05', name: 'Establish complete file structure: all directories and skeleton files for frontend, backend, firebase, docs', week: 'Pre-W1', notes: 'All placeholder files committed; full tree matches IMPLEMENTATION_PLAN.md §ENV-05' },
+    ]
+  },
+  {
+    id: 'phase-0',
+    cls: 'phase-0',
+    badge: 'Phase 0',
+    title: 'UI Prototype',
+    weeks: 'Weeks 1–3',
+    tasks: [
+      { id: 'P0-01', name: 'React project setup (Vite, React Router, ESLint, Prettier)', week: 'W1', notes: 'src/main.jsx, src/router.jsx; three role layouts' },
+      { id: 'P0-02', name: 'Design system: color tokens, typography, spacing, SnowReach brand', week: 'W1', notes: 'CSS custom properties; primary #1A6FDB; snow white #F0F6FF' },
+      { id: 'P0-03', name: 'Shared components: Button, Input, Card, Modal, Badge, StatusPill, Spinner', week: 'W1', notes: 'Reusable across all role flows' },
+      { id: 'P0-04', name: 'Navigation shell: header, mobile bottom nav, role-aware routing', week: 'W2', notes: 'Requester / Worker / Admin role switching' },
+      { id: 'P0-05', name: 'Requester — Home + job posting form', week: 'W2', notes: 'Address, service type, schedule; mock geocode response' },
+      { id: 'P0-06', name: 'Requester — Job status tracking screen', week: 'W2', notes: 'Mock state: CONFIRMED → IN_PROGRESS → COMPLETE' },
+      { id: 'P0-07', name: 'Requester — Worker profile modal', week: 'W2', notes: 'Photo, rating, distance, equipment list; mock data' },
+      { id: 'P0-08', name: 'Requester — Rating & review submission form', week: 'W3', notes: '5-star + text; submit shows confirmation screen' },
+      { id: 'P0-09', name: 'Worker — Registration / profile setup flow', week: 'W3', notes: 'Multi-step form; mock Stripe Connect redirect' },
+      { id: 'P0-10', name: 'Worker — Incoming job request notification + accept/decline', week: 'W3', notes: '10-minute countdown timer (mock)' },
+      { id: 'P0-11', name: 'Worker — Active job screen (check-in, photo upload, mark complete)', week: 'W3', notes: 'Shows Requester address + special notes' },
+      { id: 'P0-12', name: 'Worker — Earnings dashboard', week: 'W3', notes: 'Pending payout, history, HST line item; mock amounts' },
+      { id: 'P0-13', name: 'Admin — Dashboard (summary cards + recent activity)', week: 'W3', notes: 'Jobs, revenue, active Workers, flagged disputes (mock)' },
+      { id: 'P0-14', name: 'Admin — Job detail / dispute resolution screen', week: 'W3', notes: 'Status override, admin notes' },
+      { id: 'P0-15', name: 'Mobile responsive polish (all screens, 375/768/1024/1440 px)', week: 'W3', notes: '—' },
+      { id: 'P0-16', name: 'Stakeholder review session + prioritized change log', week: 'W4', notes: 'Collect feedback; triage for Phase 1 scope' },
+    ]
+  },
+  {
+    id: 'phase-1',
+    cls: 'phase-1',
+    badge: 'Phase 1',
+    title: 'MVP (Full System)',
+    weeks: 'Weeks 4–17',
+    tasks: [
+      { id: 'P1-01', name: 'Firebase project setup (Auth, Firestore, Storage, Hosting)', week: 'W4', notes: 'Create dev + prod Firebase projects; enable APIs' },
+      { id: 'P1-02', name: 'GCP project + Cloud Run skeleton + GitHub Actions CI/CD', week: 'W4', notes: 'Dockerfile; health /actuator/health; build + deploy pipeline' },
+      { id: 'P1-03', name: 'Spring Boot skeleton (Maven, security filter, CORS, global error handler)', week: 'W4', notes: 'Java 21; SecurityFilterChain; Jackson config' },
+      { id: 'P1-04', name: 'Firebase Auth token verification filter + RBAC interceptor', week: 'W5', notes: 'FirebaseAuth.verifyIdToken(); roles from Firestore users doc' },
+      { id: 'P1-05', name: 'User registration + profile API (POST /users, GET/PATCH /users/{id})', week: 'W5', notes: 'Write user doc; mirror role to Firebase custom claim' },
+      { id: 'P1-06', name: 'Worker profile API (equipment, service area, availability schedule)', week: 'W5', notes: 'workers Firestore collection; validate service area' },
+      { id: 'P1-07', name: 'Geocoding service (Google Maps server-side → FSA centroid fallback)', week: 'W5', notes: 'Never expose API key to client; cache results in Firestore' },
+      { id: 'P1-08', name: 'Job posting API (POST /jobs; validate address; REQUESTED → PENDING_DEPOSIT)', week: 'W6', notes: 'Write audit log before state change' },
+      { id: 'P1-09', name: 'Worker matching algorithm (filter by service area, rank by rating then distance)', week: 'W6', notes: 'matchedWorkers[] ordered list; exclude busy Workers' },
+      { id: 'P1-10', name: 'Sequential dispatch: Quartz sends requests one at a time; 10-min timer', week: 'W6', notes: 'H2 in-memory Quartz; recover timer refs from Firestore on startup' },
+      { id: 'P1-11', name: 'Stripe Payment Intents (PENDING_DEPOSIT capture; escrow hold)', week: 'W8', notes: 'Idempotency key = jobId; webhook signature verification' },
+      { id: 'P1-12', name: 'Stripe Connect Express (Worker onboarding link; payout on RELEASED)', week: 'W8', notes: 'Transfer 2–3 business days; HST passed through 100%' },
+      { id: 'P1-13', name: 'Job state machine (all 11 states, transitions, guards, side effects)', week: 'W9', notes: 'JobService.transition(); atomic Firestore transaction' },
+      { id: 'P1-14', name: 'Cancellation & $10 CAD fee (policy enforcement + Stripe partial capture)', week: 'W9', notes: 'Fee only if CONFIRMED and before IN_PROGRESS' },
+      { id: 'P1-15', name: 'Firebase Storage: image upload endpoint + signed URL serving', week: 'W11', notes: '10 MB max; JPEG/PNG; path jobs/{jobId}/photos/{uuid}' },
+      { id: 'P1-16', name: 'Ratings & reviews (POST /jobs/{id}/rating; update Worker avg rating)', week: 'W11', notes: 'Mutual rating; one per party; triggers payout release' },
+      { id: 'P1-17', name: 'SendGrid email notifications (domain verify; 8 templates)', week: 'W12', notes: 'Welcome, confirmed, complete, payout, dispute, etc.' },
+      { id: 'P1-18', name: 'Firebase FCM push notifications (28 notification types)', week: 'W12', notes: 'NotificationService; write to notifications/{uid}/feed' },
+      { id: 'P1-19', name: 'Admin dashboard wired to live Firestore data', week: 'W13', notes: 'Summary stats API; job list with filter + sort' },
+      { id: 'P1-20', name: 'Audit log service (SHA-256 hash chaining; separate Firestore project)', week: 'W13', notes: 'AuditLogService.write() before every state change; daily integrity check' },
+      { id: 'P1-21', name: 'Firestore security rules (deny all client writes; allow reads per spec §6.3)', week: 'W14', notes: 'firestore.rules; tested with Firebase Emulator Suite' },
+      { id: 'P1-22', name: 'Integration test suite (Spring Boot tests + Firebase Emulator)', week: 'W14', notes: 'Cover all state machine transitions; Stripe mock' },
+      { id: 'P1-23', name: 'Production deployment (Cloud Run + Firebase Hosting; smoke test)', week: 'W17', notes: 'Blue/green deploy; verify health endpoints; SendGrid domain live' },
+    ]
+  },
+  {
+    id: 'phase-2',
+    cls: 'phase-2',
+    badge: 'Phase 2',
+    title: 'Structured Disputes & Analytics',
+    weeks: 'Weeks 18–25',
+    tasks: [
+      { id: 'P2-01', name: 'Dispute workflow API (DISPUTED state; 2-hour window; Quartz timer)', week: 'W18–19', notes: 'Transition guards; lock escrow during dispute' },
+      { id: 'P2-02', name: 'Evidence upload (photo + document; Firebase Storage; linked to dispute)', week: 'W18', notes: 'Max 5 files per party; 20 MB per file' },
+      { id: 'P2-03', name: 'SnowReach Assurance adjudication (Admin resolves → RELEASED or REFUNDED)', week: 'W19–20', notes: 'Admin action triggers Stripe transfer or refund' },
+      { id: 'P2-04', name: 'Admin dispute resolution UI (evidence viewer, resolution form)', week: 'W20', notes: 'Integrated into Admin dashboard' },
+      { id: 'P2-05', name: 'Worker concurrent capacity (multi-job management; dispatch skips busy Workers)', week: 'W21', notes: 'Config flag per Worker; update matching algorithm' },
+      { id: 'P2-06', name: 'Analytics data pipeline (Firestore → aggregation; daily batch job)', week: 'W22–23', notes: 'Cloud Run scheduled job; output to analytics Firestore collection' },
+      { id: 'P2-07', name: 'Analytics dashboard (jobs/day, revenue, ratings, top Workers)', week: 'W23–24', notes: 'Admin-only; Chart.js; date-range filter' },
+      { id: 'P2-08', name: 'Platform health monitoring (latency alerts; error rates; GCP Monitoring)', week: 'W25', notes: 'Uptime checks; alert policies; on-call runbook' },
+    ]
+  },
+  {
+    id: 'phase-3',
+    cls: 'phase-3',
+    badge: 'Phase 3',
+    title: 'Trust & Safety',
+    weeks: 'Weeks 26–33',
+    tasks: [
+      { id: 'P3-01', name: 'Certn background check API integration (request, webhook, status polling)', week: 'W26–27', notes: 'Worker unlocked only after CLEAR result' },
+      { id: 'P3-02', name: 'Background check status tracking + Worker unlock flow', week: 'W27', notes: 'Admin override; email notification on result' },
+      { id: 'P3-03', name: 'Insurance declaration (upload form; PDF in Firebase Storage)', week: 'W28', notes: 'Annual renewal reminder via SendGrid' },
+      { id: 'P3-04', name: 'Trust badge system (display eligibility logic; badge icons on Worker profile)', week: 'W29', notes: 'Badges: Verified, Insured, Top-Rated, Experienced' },
+      { id: 'P3-05', name: 'Fraud detection rules engine (velocity checks, payout anomalies)', week: 'W30–31', notes: 'Rules evaluated on payout trigger; auto-flag suspicious accounts' },
+      { id: 'P3-06', name: 'Enhanced admin controls (ban, suspend, review queue, bulk actions)', week: 'W31', notes: 'All actions audit-logged; reversible ban with reason field' },
+      { id: 'P3-07', name: 'Compliance reporting (transaction log export; CSV + JSON; date-range filter)', week: 'W32', notes: 'Admin-only endpoint; includes HST breakdown' },
+      { id: 'P3-08', name: 'Security audit + penetration testing', week: 'W33', notes: 'Scope: Auth, Stripe webhooks, file upload, RBAC bypass' },
+    ]
+  }
+];
+
+// ── Status cycling ─────────────────────────────────────────────────────────
+const STATUS_CYCLE = ['todo', 'in-progress', 'done', 'blocked'];
+const STATUS_LABELS = { 'todo': 'To Do', 'in-progress': 'In Progress', 'done': 'Done', 'blocked': 'Blocked' };
+
+// ── localStorage persistence ───────────────────────────────────────────────
+const STORE_KEY = 'snowreach-tasks-v1';
+
+function loadState() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; }
+  catch { return {}; }
+}
+
+function saveState(state) {
+  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+}
+
+let taskState = loadState();
+
+function getStatus(id) { return taskState[id] || 'todo'; }
+
+function cycleStatus(id) {
+  const cur = getStatus(id);
+  const idx = STATUS_CYCLE.indexOf(cur);
+  const next = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length];
+  taskState[id] = next;
+  saveState(taskState);
+  renderPill(id);
+  updatePhaseProgress(id);
+  updateSummary();
+}
+
+function resetAll() {
+  if (!confirm('Reset all task statuses to "To Do"?')) return;
+  taskState = {};
+  saveState(taskState);
+  document.querySelectorAll('[data-task-id]').forEach(el => {
+    const id = el.dataset.taskId;
+    el.textContent = STATUS_LABELS['todo'];
+    el.className = 'status-pill status-todo';
+  });
+  updateAllPhaseProgress();
+  updateSummary();
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function renderPill(id) {
+  const el = document.querySelector(`[data-task-id="${id}"]`);
+  if (!el) return;
+  const s = getStatus(id);
+  el.textContent = STATUS_LABELS[s];
+  el.className = `status-pill status-${s}`;
+}
+
+function phaseProgress(phase) {
+  const ids = phase.tasks.map(t => t.id);
+  const done = ids.filter(id => getStatus(id) === 'done').length;
+  return { done, total: ids.length, pct: ids.length ? Math.round(done / ids.length * 100) : 0 };
+}
+
+function updatePhaseProgress(taskId) {
+  // find which phase this task belongs to
+  for (const phase of PHASES) {
+    if (phase.tasks.some(t => t.id === taskId)) {
+      _updatePhaseBar(phase);
+      break;
+    }
+  }
+}
+
+function _updatePhaseBar(phase) {
+  const { done, total, pct } = phaseProgress(phase);
+  const fill = document.getElementById(`fill-${phase.id}`);
+  const pctEl = document.getElementById(`pct-${phase.id}`);
+  const metaEl = document.getElementById(`meta-${phase.id}`);
+  if (fill) fill.style.width = pct + '%';
+  if (pctEl) pctEl.textContent = pct + '%';
+  if (metaEl) metaEl.textContent = `${done} / ${total} tasks · ${phase.weeks}`;
+}
+
+function updateAllPhaseProgress() {
+  PHASES.forEach(_updatePhaseBar);
+}
+
+function updateSummary() {
+  const allIds = PHASES.flatMap(p => p.tasks.map(t => t.id));
+  const total = allIds.length;
+  const done = allIds.filter(id => getStatus(id) === 'done').length;
+  const prog = allIds.filter(id => getStatus(id) === 'in-progress').length;
+  const blk  = allIds.filter(id => getStatus(id) === 'blocked').length;
+  const pct  = total ? Math.round(done / total * 100) : 0;
+  document.getElementById('stat-total').textContent = total;
+  document.getElementById('stat-done').textContent = done;
+  document.getElementById('stat-prog').textContent = prog;
+  document.getElementById('stat-blocked').textContent = blk;
+  document.getElementById('stat-pct').textContent = pct + '%';
+}
+
+// ── Build DOM ──────────────────────────────────────────────────────────────
+function buildTracker() {
+  const main = document.getElementById('main');
+  main.innerHTML = '';
+
+  PHASES.forEach(phase => {
+    const prog = phaseProgress(phase);
+
+    const div = document.createElement('div');
+    div.className = `phase ${phase.cls}`;
+    div.id = phase.id;
+
+    div.innerHTML = `
+      <div class="phase-header" onclick="togglePhase('${phase.id}')">
+        <span class="phase-badge">${phase.badge}</span>
+        <span class="phase-title">${phase.title}</span>
+        <div class="progress-wrap">
+          <div class="progress-bar"><div class="progress-fill" id="fill-${phase.id}" style="width:${prog.pct}%"></div></div>
+          <span class="progress-pct" id="pct-${phase.id}">${prog.pct}%</span>
+        </div>
+        <span class="phase-meta" id="meta-${phase.id}">${prog.done} / ${prog.total} tasks · ${phase.weeks}</span>
+        <span class="chevron">&#9660;</span>
+      </div>
+      <div class="task-body">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:72px">ID</th>
+              <th>Task</th>
+              <th style="width:80px">Week</th>
+              <th style="width:100px">Status</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="tbody-${phase.id}"></tbody>
+        </table>
+      </div>
+    `;
+
+    main.appendChild(div);
+
+    const tbody = document.getElementById(`tbody-${phase.id}`);
+    phase.tasks.forEach(task => {
+      const s = getStatus(task.id);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><span class="task-id">${task.id}</span></td>
+        <td class="task-name">${task.name}</td>
+        <td class="task-week">${task.week}</td>
+        <td>
+          <span class="status-pill status-${s}"
+                data-task-id="${task.id}"
+                onclick="cycleStatus('${task.id}')">${STATUS_LABELS[s]}</span>
+        </td>
+        <td class="task-notes">${task.notes}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  });
+
+  updateSummary();
+}
+
+function togglePhase(id) {
+  document.getElementById(id).classList.toggle('collapsed');
+}
+
+buildTracker();
+</script>
+</body>
+</html>

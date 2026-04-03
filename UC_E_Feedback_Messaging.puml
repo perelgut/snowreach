@@ -1,0 +1,161 @@
+@startuml UC-16
+' SnowReach - Use Case Diagrams - Group E: Cancellation, Feedback, Tip, Messaging
+' UC-16, UC-17, UC-18, UC-19
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-16 - Cancel a Job
+
+start
+
+:Cancellation initiated\n(by either party or by auto-cancel timer);
+
+if (Current job state?) then (Requested)
+  :Job -> Cancelled\nNo funds involved\nAll selected Workers notified;
+  stop
+elseif (Pending Deposit - Requester cancels?) then (yes)
+  :Job -> Cancelled\nNo funds involved\nWorker notified - Worker -> Available;
+  stop
+elseif (Pending Deposit - 30-min timer expires?) then (yes)
+  :Auto-cancel fires\nJob -> Cancelled\nNo funds\nWorker -> Available;
+  stop
+elseif (Confirmed - Phase 1?) then (yes)
+  :Full refund to Requester\nNo cancellation fee\nJob -> Cancelled - Worker -> Available\nIf Worker-initiated: Worker cancellation rate updated.;
+  stop
+elseif (Confirmed - Phase 2?) then (yes)
+  :$10 cancellation fee deducted from escrow\nRemainder refunded to Requester\nwithin 2-3 business days\nJob -> Cancelled - Worker -> Available\nIf Worker-initiated: Worker cancellation rate updated.;
+  stop
+else (In Progress or beyond)
+  :BLOCKED - cancellation not permitted\nDispute process (UC-15) applies;
+  stop
+endif
+
+@enduml
+
+@startuml UC-17
+' SnowReach - Use Case Diagrams - Group E: Cancellation, Feedback, Tip, Messaging
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-17 - Leave Feedback and Rating
+
+start
+
+:Job reaches terminal state\nApplies to: Released, Refunded, Settled.\nAlso applies to Cancelled if\nIn Progress was reached before cancellation.;
+
+:System queues rating prompts for both parties;
+
+:Rating prompts sent simultaneously\n(1-hour delay after terminal state);
+
+:Both parties rate independently\n(1-5 stars + optional written comment)\n7-day collection window;
+
+if (Both parties submit within 7 days?) then (yes)
+  :Both ratings published simultaneously\nto both profiles;
+else (one or both do not submit)
+  :7-day window expires\nNon-submitting party: "No rating submitted"\nOther party's rating published regardless;
+endif
+
+:Worker aggregate rating recalculated;
+
+if (New aggregate < 3.5 AND >= 10 completed jobs?) then (yes)
+  :Worker suspended from new jobs\nAdmin review required before reinstatement;
+  stop
+elseif (New aggregate < 4.0 AND >= 10 completed jobs?) then (yes)
+  :Admin review flag created\n(internal only - not shown to Requesters);
+else (>= 4.0 or fewer than 10 jobs)
+  :No threshold action taken;
+endif
+
+stop
+
+@enduml
+
+@startuml UC-18
+' SnowReach - Use Case Diagrams - Group E: Cancellation, Feedback, Tip, Messaging
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-18 - Leave a Tip (v1.1 only)
+
+start
+
+:Precondition: Requester has submitted\nor skipped their rating (UC-17).;
+
+:Tip prompt displayed\n($5 / $10 / $20 presets + custom entry);
+
+if (Requester selects a tip amount?) then (yes)
+  :Stripe processes tip as a separate charge\n(immediate - 100% to Worker -\nno platform commission - not in escrow);
+  if (Charge succeeds?) then (yes)
+    :Worker notified of tip amount\nTip recorded in job record;
+    stop
+  else (charge fails)
+    :Requester prompted to retry\nNo effect on job record, rating, or fund release;
+    stop
+  endif
+else (Requester skips or exits)
+  :No tip recorded\nNo penalty - no follow-up prompt;
+  stop
+endif
+
+@enduml
+
+@startuml UC-19
+' SnowReach - Use Case Diagrams - Group E: Cancellation, Feedback, Tip, Messaging
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-19 - In-App Messaging and Job Revocation
+
+start
+
+:Precondition:\nJob is Confirmed (Phase 2) or\nWorker has accepted (Phase 1).;
+
+:Messaging thread opens\n(real-time via Firebase Firestore)\nPersistent notice shown in thread:\n"Do not share personal contact\ninformation (phone numbers, email\naddresses) in this conversation.";
+
+repeat
+
+  :Either party sends a message\n(real-time delivery - in-app and email notification);
+
+  if (Either party taps "Revoke Job"?) then (yes)
+    :Confirmation screen shown\nwith applicable cancellation rules\nIf Confirmed: "$10 cancellation fee\ndeducted from escrow (Phase 2).\nRemaining balance refunded."\nIf Requested: "No charge.";
+    if (Party actively confirms revocation?) then (yes)
+      :Job cancelled per UC-16 rules\nThread archived;
+      stop
+    else (cancels revocation)
+    endif
+  else (continue messaging)
+  endif
+
+repeat while (Job reaches terminal state?) is (not yet)
+
+:Job reaches terminal state\n(Released / Refunded / Settled / Cancelled);
+
+:Thread closed to new messages\nArchived as read-only\nRetained for 7 years.\nIncluded in dispute evidence\npackage if a dispute exists on this job.;
+
+stop
+
+@enduml

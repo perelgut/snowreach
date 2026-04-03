@@ -1,0 +1,164 @@
+@startuml UC-11
+' SnowReach - Use Case Diagrams - Group C: Work Execution and Completion
+' UC-11, UC-12, UC-13, UC-14
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-11 - Begin Work (Mark In Progress)
+
+start
+
+:Precondition: Job is in Confirmed state.;
+
+:Worker opens active job and taps "Start Job";
+
+if (Requester cancels before Worker starts?) then (yes)
+  :Job -> Cancelled\n$10 fee deducted from escrow (Phase 2)\nWorker -> Available;
+  stop
+else (no)
+endif
+
+:Liability acknowledgement screen shown\n"By proceeding, you confirm full personal\nresponsibility and liability for all work\nat this property, including actions of any\nperson assisting or working on your behalf."\nCheckbox cannot be pre-selected.;
+
+if (Dispatcher or crew will perform work?) then (yes)
+  :Worker checks secondary checkbox:\n"Someone other than me will perform this work";
+  :Worker enters on-site person's full name(s);
+  :Requester immediately notified of who will be on-site;
+  :15-minute Accept/Decline window opens for Requester;
+  if (Requester taps Decline?) then (yes)
+    :Job reverts to Confirmed\n(NOT Cancelled - no cancellation fee applies)\nWorker can correct disclosure\nor submit Cannot Complete;
+    stop
+  else (Accepts or 15-min expires - auto-accept)
+  endif
+else (Personal Worker - account holder performs work)
+endif
+
+:Worker checks liability ack checkbox\nand taps "Begin Work"\nJob status -> In Progress\nTimestamp recorded\nRequester notified;
+
+:Proceed to UC-12 (Mark Complete)\nor UC-13 (Cannot Complete);
+
+stop
+
+@enduml
+
+@startuml UC-12
+' SnowReach - Use Case Diagrams - Group C: Work Execution and Completion
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-12 - Complete Work (Mark Complete)
+
+start
+
+:Precondition: Job is In Progress.;
+
+:Worker taps "Mark Complete";
+
+:System prompts for completion photos\n(up to 5 - optional but encouraged);
+
+if (Photos uploaded successfully?) then (yes)
+  :Photos attached to job record;
+elseif (Upload fails?) then (yes)
+  :Non-blocking - job continues\nFlagged "No completion photos"\n(visible to Admin and Requester);
+else (Worker skips photos)
+  :No photos - job flagged\n(visible to Admin and Requester);
+endif
+
+:Worker taps "Confirm Completion";
+
+:Job status -> Complete\n2-hr quality dispute window starts now.\n24-hr property damage window starts now.\nRating prompt queued to fire\n1 hour after terminal state is reached.\nRequester notified of both window times.;
+
+:Proceed to UC-14 (Acknowledge)\nor UC-15 (Dispute);
+
+stop
+
+@enduml
+
+@startuml UC-13
+' SnowReach - Use Case Diagrams - Group C: Work Execution and Completion
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-13 - Report Cannot Complete
+
+start
+
+:Precondition: Job is In Progress.\nWorker is unable to finish.;
+
+:Worker taps "Cannot Complete";
+
+:Mandatory reason selection\nOptions:\n- Equipment failure\n- Safety concern\n- Property access blocked\n- Weather conditions\n- Other;
+
+:Worker selects reason and optionally\nenters explanatory note (max 500 chars);
+
+:Worker taps "Submit" (irreversible once confirmed);
+
+:Job status -> Incomplete\nWorker -> Available immediately\nBoth parties notified\nMessaging thread stays open\nWorker's Cannot Complete rate incremented.\nIf 3rd incident within 90 days:\nAdmin review flag auto-created.;
+
+:Requester sees resolution screen\nwith 24-hour countdown;
+
+if (Requester decision within 24 hours?) then (Accept Outcome)
+  :Meaningful work acknowledged\nFunds released to Worker\n85% / 15% split\nJob -> Released;
+  stop
+elseif (Request Refund?) then (yes)
+  :Full refund to Requester\nNo fault assigned to Worker\nJob -> Refunded;
+  stop
+elseif (Raise Dispute?) then (yes)
+  :Dispute type pre-set: "Incomplete work"\nCannot Complete reason code and note\nincluded in evidence package\nProceed to UC-15;
+  stop
+else (No action - 24 hours expires)
+  :Auto-refund fires\nFull refund to Requester\nJob -> Refunded;
+  stop
+endif
+
+@enduml
+
+@startuml UC-14
+' SnowReach - Use Case Diagrams - Group C: Work Execution and Completion
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-14 - Acknowledge Completion
+
+start
+
+:Precondition: Job is in Complete state.\n2-hr quality window and\n24-hr damage window are both active.;
+
+:Requester receives completion notification\nand reviews job record and completion photos;
+
+if (Requester action within 2-hr quality window?) then (Approve and Release)
+  :Requester taps "Approve and Release"\nJob -> Released\nPhase 1: card charged\nPhase 2: escrow released\nWorker receives 85% within 2-3 business days\nRating prompt queued (fires 1hr later);
+  stop
+elseif (2-hr quality window expires - no dispute?) then (yes)
+  :Auto-release fires\nSame disbursement as above\nJob -> Released;
+  stop
+else (Requester raises dispute within applicable window)
+  :Proceed to UC-15 - Dispute;
+  stop
+endif
+
+@enduml
