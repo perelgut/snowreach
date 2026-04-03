@@ -7,7 +7,7 @@ const fmt = cents => '$' + (cents / 100).toFixed(2)
 const STATE_ORDER = ['REQUESTED','PENDING_DEPOSIT','CONFIRMED','IN_PROGRESS','COMPLETE','RELEASED']
 const STATE_LABELS = {
   REQUESTED: 'Job Posted',
-  PENDING_DEPOSIT: 'Awaiting Payment',
+  PENDING_DEPOSIT: 'Deposit in Escrow',
   CONFIRMED: 'Worker Confirmed',
   IN_PROGRESS: 'Work In Progress',
   COMPLETE: 'Work Complete',
@@ -15,7 +15,7 @@ const STATE_LABELS = {
 }
 const STATE_DESC = {
   REQUESTED: 'Your job has been posted and we\'re matching you with nearby workers.',
-  PENDING_DEPOSIT: 'A worker has accepted. Complete your payment to confirm the booking.',
+  PENDING_DEPOSIT: 'A worker has been matched. Your deposit is held securely in escrow until the job is complete.',
   CONFIRMED: 'All set! Your worker will arrive at the scheduled time.',
   IN_PROGRESS: 'Your worker has checked in and is clearing your snow.',
   COMPLETE: 'Work is done. Review the job and release payment.',
