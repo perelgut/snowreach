@@ -16,7 +16,7 @@ export default function WorkerEarnings() {
       <h1 style={{ fontSize: 'var(--text-xl)', fontWeight: 800, marginBottom: 'var(--sp-6)' }}>Earnings</h1>
 
       {/* Stats row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--sp-4)', marginBottom: 'var(--sp-6)' }}>
+      <div className="grid-3" style={{ marginBottom: 'var(--sp-6)' }}>
         {[
           { label: 'Total Earned', value: fmt(totalEarned), color: 'var(--green)' },
           { label: 'Pending', value: fmt(pendingAmount), color: 'var(--blue)' },

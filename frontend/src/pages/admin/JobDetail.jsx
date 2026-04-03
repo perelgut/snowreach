@@ -38,7 +38,7 @@ export default function AdminJobDetail() {
         <StatusPill status={job.status} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 'var(--sp-4)' }}>
+      <div className="grid-sidebar">
         {/* Left column */}
         <div>
           {/* Job info */}

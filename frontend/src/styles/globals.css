@@ -139,11 +139,24 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .step-line { flex: 1; height: 2px; background: var(--gray-200); }
 .step-line.done { background: var(--green); }
 
-/* Responsive */
+/* Responsive grid utilities */
+.grid-4      { display: grid; gap: var(--sp-4); grid-template-columns: repeat(4, 1fr); }
+.grid-3      { display: grid; gap: var(--sp-4); grid-template-columns: repeat(3, 1fr); }
+.grid-2      { display: grid; gap: var(--sp-4); grid-template-columns: repeat(2, 1fr); }
+.grid-sidebar { display: grid; gap: var(--sp-4); grid-template-columns: 1fr 340px; align-items: start; }
+
+/* Breakpoints */
 @media (max-width: 767px) {
   .hide-mobile { display: none !important; }
   .card { padding: var(--sp-4); }
   .container { padding: 0 var(--sp-4); }
+  .grid-4      { grid-template-columns: repeat(2, 1fr); }
+  .grid-3      { grid-template-columns: repeat(2, 1fr); }
+  .grid-2      { grid-template-columns: 1fr; }
+  .grid-sidebar { grid-template-columns: 1fr; }
+}
+@media (max-width: 479px) {
+  .grid-3 { grid-template-columns: 1fr; }
 }
 @media (min-width: 768px) {
   .hide-desktop { display: none !important; }

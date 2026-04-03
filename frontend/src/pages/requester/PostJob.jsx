@@ -241,7 +241,7 @@ export default function PostJob() {
             ))}
           </div>
           {form.schedule === 'scheduled' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 'var(--sp-4)' }}>
+            <div className="grid-2" style={{ marginBottom: 'var(--sp-4)' }}>
               <div className="field"><label className="label">Date</label><input type="date" className="input" value={form.date} onChange={e => set('date', e.target.value)} /></div>
               <div className="field"><label className="label">Time</label>
                 <select className="input" value={form.time} onChange={e => set('time', e.target.value)}>

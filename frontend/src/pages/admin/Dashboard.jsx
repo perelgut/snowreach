@@ -53,7 +53,7 @@ export default function AdminDashboard({ tab: propTab }) {
       {/* Overview */}
       {activeTab === 'overview' && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--sp-4)', marginBottom: 'var(--sp-6)' }}>
+          <div className="grid-4" style={{ marginBottom: 'var(--sp-6)' }}>
             {[
               { label: 'Total Jobs', value: jobs.length, icon: '📋' },
               { label: 'Active Jobs', value: activeJobs, icon: '⚡', color: 'var(--blue)' },
@@ -68,7 +68,7 @@ export default function AdminDashboard({ tab: propTab }) {
             ))}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--sp-4)' }}>
+          <div className="grid-2">
             <div className="card">
               <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 'var(--sp-4)' }}>Recent Jobs</h3>
               {jobs.slice(0, 3).map(job => (
