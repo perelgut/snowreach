@@ -111,14 +111,26 @@ export default function JobStatus() {
         <div className="divider" style={{ margin: '16px 0' }} />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--gray-500)' }}>
-            <span>Platform fee (15%)</span><span>- {fmt(job.platformFeeCents)}</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--gray-500)' }}>Agreed fee</span>
+            <span>{fmt(job.depositAmountCents - job.hstCents)}</span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--gray-500)' }}>
-            <span>HST (13%)</span><span>+ {fmt(job.hstCents)}</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--gray-500)' }}>HST (13%)</span>
+            <span>+ {fmt(job.hstCents)}</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
-            <span>Total charged</span><span style={{ color: 'var(--blue)' }}>{fmt(job.depositAmountCents)}</span>
+            <span>Total charged</span>
+            <span style={{ color: 'var(--blue)' }}>{fmt(job.depositAmountCents)}</span>
+          </div>
+          <div className="divider" style={{ margin: '2px 0' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--gray-500)' }}>Less platform fee (15%)</span>
+            <span style={{ color: 'var(--gray-500)' }}>− {fmt(job.platformFeeCents)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+            <span>Total paid to Worker</span>
+            <span style={{ color: 'var(--green)' }}>{fmt(job.netWorkerCents)}</span>
           </div>
         </div>
       </div>
