@@ -129,7 +129,7 @@ export default function JobStatus() {
             <span style={{ color: 'var(--gray-500)' }}>− {fmt(job.platformFeeCents)}</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
-            <span>Total paid to Worker</span>
+            <span>{job.status === 'RELEASED' ? 'Total paid to Worker' : 'Total to be paid to Worker'}</span>
             <span style={{ color: 'var(--green)' }}>{fmt(job.netWorkerCents)}</span>
           </div>
         </div>
