@@ -19,6 +19,7 @@ export default function AdminDashboard({ tab: propTab }) {
   const { jobs } = useMock()
   const [activeTab, setActiveTab] = useState(propTab || 'overview')
   const [disputes, setDisputes] = useState(INITIAL_DISPUTES)
+  const [expandedJob, setExpandedJob] = useState(null)
 
   const totalRevenue = jobs.reduce((a, j) => a + (j.platformFeeCents || 0), 0)
   const activeJobs = jobs.filter(j => !['RELEASED','CANCELLED','REFUNDED'].includes(j.status)).length
@@ -113,19 +114,55 @@ export default function AdminDashboard({ tab: propTab }) {
       {/* Jobs */}
       {activeTab === 'jobs' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-          {jobs.map(job => (
-            <div key={job.jobId} className="card" style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)' }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{job.jobId}</div>
-                <div className="truncate" style={{ fontSize: 13, color: 'var(--gray-600)', marginBottom: 2 }}>{job.address}</div>
-                <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>{job.serviceTypes.join(' · ')}</div>
+          {jobs.map(job => {
+            const isOpen = expandedJob === job.jobId
+            const agreedFee = job.depositAmountCents - job.hstCents
+            return (
+              <div key={job.jobId} className="card" style={{ cursor: 'pointer' }}
+                onClick={() => setExpandedJob(isOpen ? null : job.jobId)}
+              >
+                {/* Summary row */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{job.jobId}</div>
+                    <div className="truncate" style={{ fontSize: 13, color: 'var(--gray-600)', marginBottom: 2 }}>{job.address}</div>
+                    <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>{job.serviceTypes.join(' · ')}</div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                    <StatusPill status={job.status} />
+                    <span style={{ fontSize: 12, color: 'var(--gray-500)', fontWeight: 600 }}>{fmt(job.depositAmountCents)}</span>
+                  </div>
+                  <span style={{ color: 'var(--gray-300)', fontSize: 18, flexShrink: 0 }}>{isOpen ? '▲' : '▼'}</span>
+                </div>
+
+                {/* Expanded financial breakdown */}
+                {isOpen && (
+                  <div style={{ marginTop: 'var(--sp-4)', paddingTop: 'var(--sp-4)', borderTop: '1px solid var(--gray-100)', fontSize: 14 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ color: 'var(--gray-500)' }}>Contracted price</span>
+                      <span style={{ fontWeight: 600 }}>{fmt(agreedFee)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ color: 'var(--gray-500)' }}>HST (13%)</span>
+                      <span style={{ fontWeight: 600 }}>+ {fmt(job.hstCents)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontWeight: 700, borderTop: '1px solid var(--gray-200)', paddingTop: 6 }}>
+                      <span>Total charged</span>
+                      <span style={{ color: 'var(--blue)' }}>{fmt(job.depositAmountCents)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ color: 'var(--gray-500)' }}>Less platform fee (15%)</span>
+                      <span style={{ color: 'var(--gray-500)' }}>− {fmt(job.platformFeeCents)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, borderTop: '1px solid var(--gray-200)', paddingTop: 6 }}>
+                      <span>{['RELEASED','SETTLED'].includes(job.status) ? 'Paid to Worker' : 'To be paid to Worker'}</span>
+                      <span style={{ color: 'var(--green)' }}>{fmt(job.netWorkerCents)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
-                <StatusPill status={job.status} />
-                <span style={{ fontSize: 12, color: 'var(--gray-500)', fontWeight: 600 }}>{fmt(job.depositAmountCents)}</span>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
