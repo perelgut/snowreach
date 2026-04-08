@@ -630,6 +630,47 @@ The spec called for flat pricing (driveway $45, walkway $20, steps $10, salting 
 
 **Commit:** *(this commit)* — `feat: P0-08 rate worker form`
 
-**Next task:** P0-09 — Worker: Earnings Dashboard
+**Next task:** P0-09 — Worker: Registration and Profile Setup
+
+---
+
+## 2026-04-08 — P0-09 through P0-12 Worker Pages
+
+### P0-09 — Worker Registration (Register.jsx)
+
+**Pre-existing state:** One-line stub.
+
+**Built:** 4-step registration wizard matching the PostJob step-indicator pattern.
+
+- **Step 1 — Personal Info:** Full legal name, Canadian phone (regex validated), date of birth with 18+ enforcement (max attribute + runtime age check). Two required acknowledgement checkboxes: independent contractor terms, supervisor/adult disclosure.
+- **Step 2 — Equipment:** Snowblower make/model (required), type select, clearing width select, years of experience, extras checkboxes (salt spreader, shovel, LED light, ice scraper), real file input for photo with `URL.createObjectURL()` thumbnail preview and remove button.
+- **Step 3 — Service Area & Availability:** Canadian postal code (regex validated, auto-uppercased), radius slider 1–15 km with live property estimate (radius² × 12), max-jobs-per-day slider 1–10, per-day availability grid (Mon–Sun checkboxes; when enabled: start/end time selects at 30-min granularity from 05:00–22:00).
+- **Step 4 — Payment Setup:** Payout explainer card (escrow timing, platform fee, HST note, Stripe timeline). "Connect with Stripe" button (branded #635BFF) simulates 2s loading delay → "Bank account connected (Demo mode)" success banner. "Complete Registration" navigates to `/worker/` with `{ state: { welcome: true } }`.
+
+**Lint fix:** `Date.now()` called inside JSX render was flagged by `react-hooks/purity` rule. Fixed by computing `MAX_DOB` at module level (outside component), so it is calculated once at load time rather than on every render.
+
+### P0-10 — Worker Incoming Job Request (JobRequest.jsx)
+
+**Pre-existing state:** Fully implemented. Verified against spec — no gaps. All required functionality present: 10-min countdown, urgent flash, accept/decline, auto-decline at 0, navigation to ActiveJob on accept.
+
+### P0-11 — Worker Active Job (ActiveJob.jsx)
+
+**Pre-existing state:** Fully implemented. Verified against spec — no significant gaps. Check-in flow, mock photo upload gate, COMPLETE state confirmation all present.
+
+### P0-12 — Worker Earnings Dashboard (Earnings.jsx)
+
+**Pre-existing state:** Implemented but had bugs and missing welcome banner.
+
+**Fixed:**
+- `mockWorker.rating` → `mockWorker.averageRating` (field didn't exist — stat showed `undefined`)
+- `mockWorker.jobsCompleted` → `mockWorker.totalJobsCompleted` (same issue)
+- Added `useLocation()` to read `location.state?.welcome` — when navigating from Register step 4, a welcome banner is shown: "🎉 Welcome to YoSnowMow, Alex! Your registration is complete."
+
+### Verification
+- `npm run lint` — 0 errors, 0 warnings (after fixing `Date.now()` purity error)
+
+**Commit:** *(this commit)* — `feat: P0-09 worker registration; fix P0-12 earnings bugs`
+
+**Next task:** P0-13 — Admin Dashboard
 
 ---

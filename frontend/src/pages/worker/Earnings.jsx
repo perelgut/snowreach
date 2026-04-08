@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useMock } from '../../context/MockStateContext'
 import StatusPill from '../../components/StatusPill'
 
@@ -6,6 +7,8 @@ const fmt = cents => '$' + (cents / 100).toFixed(2)
 
 export default function WorkerEarnings() {
   const { mockWorker, jobs } = useMock()
+  const location = useLocation()
+  const showWelcome = location.state?.welcome === true
 
   const [expandedJob, setExpandedJob] = useState(null)
   const completedJobs = jobs.filter(j => ['COMPLETE','RELEASED','SETTLED'].includes(j.status))
@@ -15,6 +18,11 @@ export default function WorkerEarnings() {
 
   return (
     <div>
+      {showWelcome && (
+        <div className="alert alert-success" style={{ marginBottom: 'var(--sp-5)' }}>
+          🎉 Welcome to YoSnowMow, {mockWorker.displayName.split(' ')[0]}! Your registration is complete. Start accepting jobs from the Requests tab.
+        </div>
+      )}
       <h1 style={{ fontSize: 'var(--text-xl)', fontWeight: 800, marginBottom: 'var(--sp-6)' }}>Earnings</h1>
 
       {/* Stats row */}
@@ -22,7 +30,7 @@ export default function WorkerEarnings() {
         {[
           { label: 'Total Earned', value: fmt(totalEarned), color: 'var(--green)' },
           { label: 'Pending', value: fmt(pendingAmount), color: 'var(--blue)' },
-          { label: 'Jobs Done', value: mockWorker.jobsCompleted, color: 'var(--gray-700)' },
+          { label: 'Jobs Done', value: mockWorker.totalJobsCompleted, color: 'var(--gray-700)' },
         ].map(stat => (
           <div key={stat.label} className="card" style={{ textAlign: 'center', padding: 'var(--sp-5) var(--sp-4)' }}>
             <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: stat.color }}>{stat.value}</div>
@@ -34,7 +42,7 @@ export default function WorkerEarnings() {
       {/* Rating card */}
       <div className="card" style={{ marginBottom: 'var(--sp-6)', display: 'flex', alignItems: 'center', gap: 'var(--sp-5)' }}>
         <div style={{ textAlign: 'center', flexShrink: 0 }}>
-          <div style={{ fontSize: 36, fontWeight: 900, color: 'var(--blue)' }}>{mockWorker.rating}</div>
+          <div style={{ fontSize: 36, fontWeight: 900, color: 'var(--blue)' }}>{mockWorker.averageRating}</div>
           <div style={{ fontSize: 20, color: '#FBBF24', letterSpacing: -2 }}>{'★'.repeat(5)}</div>
           <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 2 }}>Rating</div>
         </div>
