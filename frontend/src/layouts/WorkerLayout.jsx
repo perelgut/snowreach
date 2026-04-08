@@ -20,7 +20,7 @@ export default function WorkerLayout() {
             <line x1="8" y1="8" x2="22" y2="22" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
             <line x1="22" y1="8" x2="8" y2="22" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
           </svg>
-          <span style={{ fontWeight: 800, fontSize: 17, color: '#fff' }}>SnowReach</span>
+          <span style={{ fontWeight: 800, fontSize: 17, color: '#fff' }}>YoSnowMow</span>
         </NavLink>
         <span style={{ fontSize: 12, color: 'rgba(255,255,255,.6)', fontWeight: 600, background: 'rgba(255,255,255,.12)', padding: '2px 8px', borderRadius: 4 }}>Worker Portal</span>
 

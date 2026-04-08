@@ -47,7 +47,7 @@ export default function AdminDashboard({ tab: propTab }) {
     <div>
       <div style={{ marginBottom: 'var(--sp-6)' }}>
         <h1 style={{ fontSize: 'var(--text-xl)', fontWeight: 800, marginBottom: 4 }}>Admin Dashboard</h1>
-        <p style={{ color: 'var(--gray-400)', fontSize: 14 }}>SnowReach Platform Management</p>
+        <p style={{ color: 'var(--gray-400)', fontSize: 14 }}>YoSnowMow Platform Management</p>
       </div>
 
       {/* Tabs */}

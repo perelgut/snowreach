@@ -24,7 +24,7 @@ export default function RequesterLayout() {
             <line x1="22" y1="8" x2="8" y2="22" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
             <circle cx="15" cy="15" r="2.5" fill="#fff"/>
           </svg>
-          <span style={{ fontWeight: 800, fontSize: 17, color: '#1A202C', letterSpacing: -.3 }}>SnowReach</span>
+          <span style={{ fontWeight: 800, fontSize: 17, color: '#1A202C', letterSpacing: -.3 }}>YoSnowMow</span>
         </NavLink>
 
         <nav className="hide-mobile" style={{ display: 'flex', gap: 'var(--sp-6)', flex: 1 }}>

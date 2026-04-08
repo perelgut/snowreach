@@ -292,7 +292,7 @@ export default function PostJob() {
           </div>
           <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer', marginBottom: 'var(--sp-5)', fontSize: 13, color: 'var(--gray-600)' }}>
             <input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} style={{ marginTop: 2, flexShrink: 0 }} />
-            I acknowledge that the Worker is an independent contractor and not an employee of SnowReach. All liability for services rests with the Worker.
+            I acknowledge that the Worker is an independent contractor and not an employee of YoSnowMow. All liability for services rests with the Worker.
           </label>
           {errors.ack && <div className="alert alert-error" style={{ marginBottom: 12 }}>{errors.ack}</div>}
           <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>

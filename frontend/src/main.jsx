@@ -8,7 +8,7 @@ import App from './App.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <BrowserRouter basename="/snowreach">
+    <BrowserRouter basename="/yosnowmow">
       <MockStateProvider>
         <App />
       </MockStateProvider>

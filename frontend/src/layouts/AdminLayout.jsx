@@ -25,7 +25,7 @@ export default function AdminLayout() {
               <line x1="8" y1="8" x2="22" y2="22" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
               <line x1="22" y1="8" x2="8" y2="22" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
             </svg>
-            <span style={{ color: '#fff', fontWeight: 800, fontSize: 15 }}>SnowReach</span>
+            <span style={{ color: '#fff', fontWeight: 800, fontSize: 15 }}>YoSnowMow</span>
           </div>
           <div style={{ marginTop: 4, fontSize: 11, color: 'rgba(255,255,255,.4)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: .5 }}>Admin Panel</div>
         </div>
