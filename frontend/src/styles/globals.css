@@ -3,11 +3,11 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  font-family: var(--font);
-  font-size: var(--text-base);
-  line-height: 1.55;
-  color: var(--gray-800);
-  background: var(--snow);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  color: var(--color-gray-800);
+  background: var(--color-snow);
   -webkit-font-smoothing: antialiased;
 }
 
