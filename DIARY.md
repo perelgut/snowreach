@@ -422,3 +422,54 @@ The frontend was already well past P0-01 scaffolding — Phase 0 prototype was a
 **Next task:** P0-02 — Design System
 
 ---
+
+## 2026-04-08 — P0-04 Navigation Shell
+
+### Scope
+P0-04 completes the three layout shells (RequesterLayout, WorkerLayout, AdminLayout) and introduces the DevRoleSwitcher as a proper component.
+
+### Gaps identified before implementation
+
+1. **DevRoleSwitcher had no production guard** — CRITICAL. The existing flat `src/components/DevRoleSwitcher.jsx` had the full component inline with no `import.meta.env.DEV` check. This meant the "Demo Mode" switcher would appear in production builds and be visible to real users.
+2. **DevRoleSwitcher not in subdirectory** — Spec calls for `components/DevRoleSwitcher/DevRoleSwitcher.jsx` consistent with all other shared components.
+3. **AdminLayout missing Analytics nav link** — The route `/admin/analytics` existed in `App.jsx` (added in P0-01) but the sidebar `NAV` array had no entry for it — the page was unreachable via UI.
+4. **RequesterLayout missing notification bell** — Spec calls for a notification bell icon in the requester header to support future job notification UX.
+
+### Changes made
+
+**`src/components/DevRoleSwitcher/DevRoleSwitcher.jsx`** (new canonical location)
+- Full implementation moved here from flat file
+- Added `if (!import.meta.env.DEV) return null` guard at top of component — this is the most important change; ensures Demo Mode UI never appears in production builds
+- Updated z-index to `var(--z-toast)` (canonical token)
+- Updated color vars to canonical form: `var(--color-primary)`, `var(--color-gray-100)`, `var(--color-gray-200)`, `var(--color-gray-400)`, `var(--color-gray-600)`
+
+**`src/components/DevRoleSwitcher.jsx`** (flat file — backward-compat shim)
+- Replaced full implementation with one-line re-export: `export { default } from './DevRoleSwitcher/DevRoleSwitcher'`
+- Matches pattern of `Modal.jsx` and `StatusPill.jsx` backward-compat shims
+- `App.jsx` imports from `'./components/DevRoleSwitcher'` — no import change needed
+
+**`src/layouts/AdminLayout.jsx`**
+- Added `{ to: '/admin/analytics', icon: '📈', label: 'Analytics' }` to the `NAV` array
+- Analytics now appears in both the desktop sidebar and mobile icon row
+- Route was already wired in `App.jsx` (`ceedd3e`) — this just made it reachable from the UI
+
+**`src/layouts/RequesterLayout.jsx`**
+- Added notification bell button (🔔) to the right-side header, to the left of the user's display name and avatar
+- `aria-label="Notifications"` for accessibility
+- Styled with `background: none; border: none; cursor: pointer` — unobtrusive, consistent with header
+- No functionality in Phase 0 — bell is a visual placeholder for Phase 1 push notifications
+
+### Decisions
+
+- **No CSS Modules for layouts** — The spec document (`CLAUDE.md`) states the design approach is "inline styles referencing CSS custom properties — no CSS modules, no Tailwind". All three layouts already follow this. Creating `.module.css` files would diverge from the established pattern without benefit.
+- **Bell icon only, no badge** — Phase 0 has no real notification count. Adding a hardcoded badge number would be misleading. The bell alone communicates the affordance.
+- **Analytics nav at bottom of sidebar** — Added last in the NAV array, below Disputes. This is the natural position for a monitoring/reporting section below operational sections.
+
+### Verification
+- `npm run lint` — 0 errors, 0 warnings (all three modified files pass)
+
+**Commit:** *(this commit)* — `feat: P0-04 navigation shell`
+
+**Next task:** P0-05 — Requester Flow
+
+---

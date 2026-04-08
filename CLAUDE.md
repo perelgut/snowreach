@@ -8,6 +8,7 @@ By default, assume all development of web applications will involve: HTML5, CSS,
 
 All code should be properly commented with appropriate variable names.  All care should be taken to keep code neat and clear, easy to read even by junior programmers.  As code is developed, documentation via JDOC and unit testing via JUNIT should be considered.
 
+NOTE: Always keep a diary that is fanatically kept up to date with every change made and any discussions leading to the change.  This will be an extremely detailed document of the process of developing the web applications.  If it needs to be read by humans, we can always create a process to simplify it to outcomes or something.
 ---
 
 ## Project Overview

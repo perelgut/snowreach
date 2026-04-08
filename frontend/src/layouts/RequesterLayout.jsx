@@ -35,6 +35,12 @@ export default function RequesterLayout() {
         </nav>
 
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
+          {/* Notification bell — active jobs or messages */}
+          <button aria-label="Notifications" style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 20, lineHeight: 1, padding: 'var(--sp-1)',
+            color: 'var(--gray-600)',
+          }}>🔔</button>
           <span style={{ fontSize: 13, color: 'var(--gray-600)' }} className="hide-mobile">{mockUser.displayName}</span>
           <div style={{
             width: 34, height: 34, borderRadius: '50%', background: '#1A6FDB',
