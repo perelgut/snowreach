@@ -549,3 +549,47 @@ The spec called for flat pricing (driveway $45, walkway $20, steps $10, salting 
 **Next task:** P0-07 — Requester: Worker Profile Modal
 
 ---
+
+## 2026-04-08 — P0-07 Requester: Worker Profile Modal
+
+### Pre-existing state
+`WorkerProfile.jsx` was a one-line stub: `return <div>Worker Profile — coming soon</div>`.
+
+### Implementation
+
+**`WorkerProfile.jsx`** — full rewrite with dual-mode design:
+
+**Shared content component (`WorkerProfileContent`)** — internal, not exported:
+- Header: 64px avatar circle (initials "AM"), name "Alex M.", star rating (4.8), jobs count (47), member since Jan 2024
+- Trust badges row: "✓ Background Checked" (green) + "🛡 Insured (Phase 3)" (gray, styled as coming-soon)
+- Stats bar: Response Rate 98% / Avg. Job Time 45 min / Disputes 0
+- Equipment list: Husqvarna ST224, salt spreader, LED work light
+- Service Area & Availability table: area, response time, radius, hours
+- 3 mock reviews with stars, date, text, reviewer name; separated by dividers
+
+**Default export `WorkerProfile`** — standalone page at `/requester/workers/:workerId`:
+- `navigate(-1)` "← Back" button (browser history back, avoids hardcoding a return path)
+
+**Named export `WorkerProfileModal`** — modal wrapper:
+- Wraps `WorkerProfileContent` in the shared `Modal` component (size="lg", title="Worker Profile")
+- Used by `JobStatus.jsx` for the "View Profile" button
+
+**`JobStatus.jsx`** — updated:
+- Imported `WorkerProfileModal` from `./WorkerProfile`
+- Added `profileOpen` state
+- Changed "View Profile" from a `<Link>` (navigates away) to a `<button>` that sets `profileOpen = true`
+- `<WorkerProfileModal>` rendered in JSX, controlled by `profileOpen`
+
+### Decisions
+- **navigate(-1) for back button** — WorkerProfile can be reached from multiple contexts (JobStatus page, potentially other places in Phase 1). Using `navigate(-1)` avoids assuming the caller. If there's no history, it's a minor edge case in Phase 0.
+- **Modal size "lg"** — the profile content is tall with reviews; "md" would require excessive scrolling within the modal.
+- **Insured badge grayed out** — spec says "Phase 3 coming-soon". Styled with gray background/text and explicit "(Phase 3)" label so it's visible but clearly not active.
+
+### Verification
+- `npm run lint` — 0 errors, 0 warnings
+
+**Commit:** *(this commit)* — `feat: P0-07 worker profile modal`
+
+**Next task:** P0-08 — Requester: Rating and Review Form
+
+---

@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useMock } from '../../context/MockStateContext'
 import StatusPill from '../../components/StatusPill'
 import Modal from '../../components/Modal'
+import { WorkerProfileModal } from './WorkerProfile'
 
 const fmt = cents => '$' + (cents / 100).toFixed(2)
 
@@ -43,6 +44,7 @@ export default function JobStatus() {
   const [cancelOpen, setCancelOpen] = useState(false)
   const [disputeOpen, setDisputeOpen] = useState(false)
   const [disputeReason, setDisputeReason] = useState('')
+  const [profileOpen, setProfileOpen] = useState(false)
 
   if (!job) return (
     <div className="card" style={{ textAlign: 'center', padding: 'var(--sp-10)' }}>
@@ -153,12 +155,12 @@ export default function JobStatus() {
               </div>
             </div>
 
-            <Link
-              to={`/requester/workers/${mockWorker.uid}`}
-              style={{ fontSize: 13, color: 'var(--blue)', fontWeight: 600, textDecoration: 'none', flexShrink: 0 }}
+            <button
+              onClick={() => setProfileOpen(true)}
+              style={{ fontSize: 13, color: 'var(--blue)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0, padding: 0 }}
             >
               View Profile
-            </Link>
+            </button>
           </div>
         </div>
       )}
@@ -281,6 +283,9 @@ export default function JobStatus() {
           )}
         </p>
       </Modal>
+
+      {/* Worker profile modal */}
+      <WorkerProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
 
       {/* Dispute modal */}
       <Modal
