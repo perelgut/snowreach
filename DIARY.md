@@ -674,3 +674,56 @@ The spec called for flat pricing (driveway $45, walkway $20, steps $10, salting 
 **Next task:** P0-13 — Admin Dashboard
 
 ---
+
+## 2026-04-08 — P0-13 Admin Dashboard + P0-14 Admin Job Detail
+
+### P0-13 — Admin Dashboard (Dashboard.jsx)
+
+**Pre-existing state:** Substantial implementation existed but had several gaps vs spec.
+
+**Changes made:**
+
+- **Header:** Added `TODAY` date string (computed at module level via `toLocaleDateString`).
+- **Stat cards:** Added coloured left border (blue / purple / green / red per spec). Added "↑ 8%" trend badge on Total Jobs card. Revenue card falls back to hardcoded `184700` when no mock jobs have platform fees yet.
+- **Jobs tab:** Changed from accordion cards to a proper `<table>` with clickable rows → `navigate('/admin/jobs/:jobId')`. Columns: Job ID / Address / Services / Status / Value / Scheduled. Row hover highlights blue.
+- **Users tab:** Expanded from 4 to 8 mock users. Added `Pending` status style (amber). Fixed `u.rating != null` guard (was checking truthiness, which would hide a 0 rating).
+- **Disputes tab:** Added second dispute row (D-002: property damage claim). Added "Review Job Detail →" button linking to job detail page.
+- **Overview tab activity feed:** Added `ACTIVITY_FEED` array with 6 timestamped events. Rendered in right column of `grid-sidebar` layout (desktop side panel, mobile below).
+- **Overview quick-links:** Recent Jobs list now navigates to job detail on row click.
+
+### P0-14 — Admin Job Detail + Dispute Resolution (JobDetail.jsx)
+
+**Pre-existing state:** Solid foundation — timeline, financials, parties, admin actions all present. Several gaps.
+
+**Bug fixes:**
+- `mockWorker.rating` → `mockWorker.averageRating`
+- `mockWorker.jobsCompleted` → `mockWorker.totalJobsCompleted`
+- "Back to Dashboard" now links to `/admin` (was `/admin/jobs`)
+
+**Added:**
+
+**Dispute section** (rendered when `job.status === 'DISPUTED'`):
+- Requester statement (mock text)
+- Worker statement (mock text)
+- 2 mock evidence photo thumbnails (gray placeholder boxes with labels)
+- Resolution form: Release / Refund / Split radio buttons; Split shows a % slider with live worker/requester payout preview; admin resolution notes textarea; "Resolve Dispute" → confirm Modal → applies `RELEASED` or `REFUNDED` to MockStateContext
+
+**Admin Actions — confirmation modals added:**
+- Override status: dropdown + "Apply" → Modal confirms override
+- Force Release Payment → Modal shows amount → applies `RELEASED`
+- Issue Refund → Modal shows amount + warns worker receives nothing → applies `REFUNDED`
+
+**Admin Notes card:** Textarea + "Save Note" button with "✓ Saved" feedback (local state only in Phase 0; Phase 1 would persist to Firestore).
+
+**Escrow status:** Financial card now shows "Escrow: Held / Released" based on job status.
+
+**Dispute also shows worker card** for DISPUTED status (added to the parties visibility condition).
+
+### Verification
+- `npm run lint` — 0 errors, 0 warnings
+
+**Commit:** *(this commit)* — `feat: P0-13 admin dashboard + P0-14 job detail/dispute resolution`
+
+**Next task:** P0-15 — Mobile Responsive Polish
+
+---
