@@ -157,6 +157,35 @@ Claude Code session initiated in `C:\Users\perel\claude_code\yosnowmow`. The pro
 
 ---
 
+## 2026-04-08 — P0-02 locked down / logo refinements
+
+### Hero section logo and tagline (RequesterHome)
+- Replaced ❄️ emoji in hero with colour logo, sized to 360px (3x at user request)
+- Centring fix: globals.css resets `img` to `display: block`, breaking `text-align: center`. Fixed by wrapping image in `display: flex; justify-content: center` div.
+- Tagline: "Snow cleared. Fast." → "Snow cleared or lawns mowed. Fast."
+- Subline: "Connect with a local snowblower owner in minutes." → "Connect with a local worker in minutes."
+
+### Header logo (RequesterLayout)
+- Size: 56px → 168px (3x at user request)
+- `height: var(--header-h)` (64px) clipped the taller logo. Fixed: `height` → `minHeight` + `padding: var(--sp-2)` so header expands to contain logo.
+
+### Known deferred items (user decision)
+- Logo PNG has excess gray background/glow — tighter crop or transparent SVG would improve appearance. **Deferred.**
+- `TASK_TRACKER.html` logo still too small to read; link to `http://YoSnowGo.ca` not yet added. **Deferred.**
+
+### GitHub Pages / CI fixes
+- `frontend-deploy.yml` placeholder replaced with real build + deploy-pages workflow.
+- Pre-existing `deploy.yml` found doing the same job — both share `concurrency: group: pages`. Redundant but harmless; cleanup deferred.
+- Base path casing fix: `/yosnowmow/` → `/YoSnowMow/` in `vite.config.js` and `BrowserRouter basename`.
+
+### Phase status
+- P0-01 ✓ Complete
+- P0-02 ✓ **Locked down**
+
+**Next task:** P0-03 — Shared Components
+
+---
+
 ## 2026-04-08 — Session 1 continued: P0-02 Design System
 
 ### Context
