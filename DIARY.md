@@ -506,3 +506,46 @@ The spec called for flat pricing (driveway $45, walkway $20, steps $10, salting 
 **Next task:** P0-06 — Requester: Job Status Tracking
 
 ---
+
+## 2026-04-08 — P0-06 Requester: Job Status Tracking
+
+### Pre-existing state
+`JobStatus.jsx` already existed with a vertical timeline, job details card, price breakdown, and an "Advance State" dev tool. Several P0-06 requirements were missing.
+
+### Gaps filled
+
+**Action buttons** (new):
+- **Cancel Job** — red ghost button, visible for REQUESTED/PENDING_DEPOSIT/CONFIRMED. Opens a confirmation Modal. Note shown if status is CONFIRMED (cancellation fee applies). On confirm: `setJobStatus(jobId, 'CANCELLED')`.
+- **Raise Dispute** — amber-outlined button, visible for COMPLETE only. Opens a Modal with a textarea (min 10 chars to enable Submit). On confirm: `setJobStatus(jobId, 'DISPUTED')`.
+- **Rate Worker** — green primary button, visible for COMPLETE only. Navigates to `/requester/jobs/:id/rate`.
+
+**Worker card** (enhanced):
+- Fixed field name bugs: `mockWorker.rating` → `mockWorker.averageRating`, `mockWorker.jobsCompleted` → `mockWorker.totalJobsCompleted` (the MockStateContext object uses these correct names; old code referenced undefined fields).
+- Added `job.currentWorkerDistance` (falling back to '1.2 km') for distance display.
+- Added hardcoded equipment "Husqvarna ST224" (mock data; real equipment in Phase 1).
+- Added "View Profile" Link → `/requester/workers/${mockWorker.uid}`.
+- Worker card now also shown for DISPUTED state (not just CONFIRMED/IN_PROGRESS/COMPLETE/RELEASED).
+
+**Dev tools** (gated):
+- Wrapped `import.meta.env.DEV` so the dev tools card never renders in production builds.
+
+**Timeline** (improved):
+- Separated ADVANCE_ORDER (for dev tool cycling) from TIMELINE_STATES (5 visible nodes: Requested → Awaiting Payment → Confirmed → In Progress → Complete).
+- Terminal/exception states (DISPUTED, CANCELLED, etc.) now correctly show all prior nodes as completed rather than rendering a broken active state.
+
+**STATUS_DESC** extended to cover all 11 states including DISPUTED, CANCELLED, INCOMPLETE, REFUNDED, SETTLED.
+
+### Decisions
+
+- **No CSS Module** — consistent with project approach (inline styles + global classes). The spec mentioned `JobStatus.module.css` but this project's pattern is established as inline styles.
+- **Min 10 chars for dispute** — prevents accidental empty dispute submissions. Not a hard requirement but a sensible UX guard.
+- **Dispute also shows worker card** — if you're raising a dispute, you need to see who the worker was.
+
+### Verification
+- `npm run lint` — 0 errors, 0 warnings
+
+**Commit:** *(this commit)* — `feat: P0-06 job status tracking`
+
+**Next task:** P0-07 — Requester: Worker Profile Modal
+
+---
