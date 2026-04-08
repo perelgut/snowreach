@@ -252,6 +252,23 @@ All commits from this session pushed to `origin/main` (`perelgut/YoSnowMow`).
 
 ---
 
+## 2026-04-08 — Fix: GitHub Pages 404 on assets
+
+**Problem:** `https://perelgut.github.io/yosnowmow/` served the HTML but all assets (CSS, JS) returned 404. Root cause: `frontend/dist/` is gitignored so built assets never reach GitHub Pages. The `frontend-deploy.yml` workflow was still a placeholder comment with no build or deploy steps.
+
+**Fix:** Wrote a real GitHub Actions workflow in `.github/workflows/frontend-deploy.yml`:
+- Trigger: push to `main` when `frontend/**` or the workflow itself changes; also `workflow_dispatch`
+- Build job: `actions/checkout@v4` → `actions/setup-node@v4` (Node 20, npm cache) → `npm ci` → `npm run build` → `actions/upload-pages-artifact@v3` from `frontend/dist`
+- Deploy job: `actions/deploy-pages@v4` targeting `github-pages` environment
+
+Vite `base: '/yosnowmow/'` was already correctly set, matching `perelgut.github.io/yosnowmow/`.
+
+**Manual step required:** GitHub repo Settings → Pages → Source must be set to **GitHub Actions** (not branch deploy).
+
+**Commit:** `aaf4597` — `ci: implement GitHub Pages deployment workflow`
+
+---
+
 ## 2026-04-08 — Build fix: Login.jsx and Signup.jsx missing default exports
 
 **Problem:** GitHub Actions build failed with `[MISSING_EXPORT]` errors for `Login.jsx` and `Signup.jsx`. Both files were created in ENV-05 as comment-only placeholders (`// TODO: implement in P1-06`) with no `export default`. Rolldown (Vite's production bundler) treats this as a hard error.
