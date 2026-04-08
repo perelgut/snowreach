@@ -269,6 +269,24 @@ Vite `base: '/yosnowmow/'` was already correctly set, matching `perelgut.github.
 
 ---
 
+## 2026-04-08 — Fix: GitHub Pages asset 404s (base path casing)
+
+**Problem (second report):** After the workflow fix, the page still showed 404s on CSS and JS assets. `curl https://perelgut.github.io/yosnowmow/` returned "Site not found".
+
+**Diagnosis:** `gh api repos/perelgut/YoSnowMow/pages` revealed `html_url: https://perelgut.github.io/YoSnowMow/` — the repo name is `YoSnowMow` (title case). GitHub Pages paths are case-sensitive. Vite `base` was `/yosnowmow/` so the built HTML referenced assets as `/yosnowmow/assets/index-xxx.js`. The actual deployed path was `/YoSnowMow/assets/index-xxx.js`. Result: HTML loaded (GitHub may redirect root) but all assets 404'd.
+
+**Fix:**
+- `frontend/vite.config.js`: `base: '/yosnowmow/'` → `base: '/YoSnowMow/'`
+- `frontend/src/main.jsx`: `basename="/yosnowmow"` → `basename="/YoSnowMow"`
+
+**Verification:** After deploy, `curl https://perelgut.github.io/YoSnowMow/assets/index-33xKFwgo.js` → HTTP 200.
+
+**Live URL:** `https://perelgut.github.io/YoSnowMow/`
+
+**Commit:** `0adab03` — `fix: correct base path casing for GitHub Pages`
+
+---
+
 ## 2026-04-08 — Build fix: Login.jsx and Signup.jsx missing default exports
 
 **Problem:** GitHub Actions build failed with `[MISSING_EXPORT]` errors for `Login.jsx` and `Signup.jsx`. Both files were created in ENV-05 as comment-only placeholders (`// TODO: implement in P1-06`) with no `export default`. Rolldown (Vite's production bundler) treats this as a hard error.
