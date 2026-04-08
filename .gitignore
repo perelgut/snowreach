@@ -1,0 +1,75 @@
+# ── Node / Frontend ───────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Java / Backend ────────────────────────────────────────────────
+backend/target/
+backend/.mvn/wrapper/maven-wrapper.jar
+!backend/.mvn/wrapper/maven-wrapper.properties
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# ── Spring Boot ───────────────────────────────────────────────────
+backend/src/main/resources/firebase-service-account.json
+backend/src/main/resources/firebase-service-account-audit.json
+backend/.env
+backend/application-secrets.yml
+
+# ── Firebase ──────────────────────────────────────────────────────
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.firebaserc.local
+
+# ── Quartz / H2 ───────────────────────────────────────────────────
+*.mv.db
+*.trace.db
+quartz.properties
+
+# ── IDE / Editor ─────────────────────────────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+.classpath
+.project
+.settings/
+.vscode/settings.json
+
+# ── OS ────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── Secrets / credentials ────────────────────────────────────────
+*.pem
+*.key
+*.p12
+*.jks
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+
+# ── Logs ─────────────────────────────────────────────────────────
+logs/
+*.log
