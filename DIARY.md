@@ -151,7 +151,51 @@ Claude Code session initiated in `C:\Users\perel\claude_code\yosnowmow`. The pro
 - ENV-04 ✓ Complete
 - ENV-05 ✓ Complete
 
-**Next task:** P0-02 — Design System
+**Next task:** P0-03 — Shared Components
+
+---
+
+## 2026-04-08 — Session 1 continued: P0-02 Design System
+
+### Context
+The frontend already had working `tokens.css` and `globals.css` from Phase 0 prototype work. Token names used a short-form convention (`--blue`, `--sp-1`, `--text-xl`) that differed from the spec's canonical convention (`--color-primary`, `--space-1`, `--font-size-xl`).
+
+### Decision: dual-naming strategy
+Renaming existing tokens would have broken all existing prototype components. Instead, the canonical spec names were added as the primary definitions, with the short names kept as CSS custom property aliases (`--blue: var(--color-primary)`). This means:
+- All new code uses canonical names
+- All existing Phase 0 code continues to work unchanged
+- Both name sets resolve to identical values at runtime
+
+### tokens.css changes
+Complete rewrite with the following structure:
+- Brand colours: `--color-primary`, `--color-primary-dark`, `--color-primary-light`, `--color-snow`, `--color-white`
+- Neutral grays: `--color-gray-100/200/400/500/600/800` (added `--color-gray-500: #6B7A8D` not in spec but needed)
+- Semantic: `--color-success/warning/error` with `-bg` variants; `--color-purple/purple-bg`
+- Job status: all 11 states including `--color-status-refunded`, `--color-status-incomplete`, `--color-status-settled` (all missing from original)
+- Typography: `--font-family` (Inter first), `--font-size-*`, `--font-weight-regular/medium/semibold/bold`, `--line-height-tight/base/relaxed`
+- Spacing: `--space-1` through `--space-16` (added `--space-12: 48px` and `--space-16: 64px`)
+- Shape: `--radius-sm/md/lg/xl/full` (added `--radius-xl: 16px`)
+- Shadows: `--shadow-sm/md/lg` (added `--shadow-md` as the canonical name for what was `--shadow`)
+- Z-index: `--z-base/above/modal/toast` (entirely new)
+- Layout: `--max-width-content: 1080px`, `--header-height: 64px`, `--sidebar-width: 240px`, `--bottom-nav-height: 64px`
+
+**Layout token values vs original:** Original used 60px for header/nav; spec calls for 64px. Short aliases (`--header-h`, `--nav-h`) now point to the new 64px values. This is a minor visual change to existing layouts — acceptable for Phase 0.
+
+### globals.css changes
+- Updated `body` declaration to use canonical token names (`--font-family`, `--font-size-base`, `--line-height-base`, `--color-gray-800`, `--color-snow`)
+- All other existing rules unchanged (they use short aliases which still resolve correctly)
+
+### index.html changes
+- Added Inter Google Fonts CDN link (`wght@400;500;600;700`, `display=swap`)
+- Added `preconnect` hints for fonts.googleapis.com and fonts.gstatic.com
+- Fixed page title from "frontend" to "YoSnowMow"
+
+### Verification
+- `npm run lint` — 0 errors
+
+**Commit:** `f5c9679` — `feat: implement design system (P0-02)`
+
+**Next task:** P0-03 — Shared Components
 
 ---
 
