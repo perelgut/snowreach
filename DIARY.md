@@ -225,6 +225,33 @@ Prepended centred logo image (height 120px) to all 11 markdown docs in `docs/` a
 
 ---
 
+## 2026-04-08 — Logo added to TASK_TRACKER.html; all changes pushed to GitHub
+
+### TASK_TRACKER.html
+Replaced the SVG snowflake placeholder in the blue header with the colour logo (`images/YoSnowMow.png`).
+- CSS updated: `.logo svg { width: 36px; height: 36px }` → `.logo img { height: 52px; width: auto }`
+- HTML updated: SVG block replaced with `<img src="images/YoSnowMow.png" alt="YoSnowMow logo" />`
+
+The colour logo was used (not BW) because the user specifically requested it, and the PNG's neutral gray surround blends acceptably against the blue header at this size.
+
+### Push to GitHub
+All commits from this session pushed to `origin/main` (`perelgut/YoSnowMow`).
+
+**Commits pushed:**
+- `be0d097` — chore: add .gitignore
+- `e4bef75` — chore: VS Code extension recommendations (ENV-04)
+- `5654efc` — chore: complete file structure (ENV-05)
+- `c5ad787` — chore: initial DIARY.md
+- `f1b14b1` — feat: P0-01 React project setup
+- `251d981` — chore: diary P0-01
+- `f5c9679` — feat: design system (P0-02)
+- `e5a8f97` — chore: diary P0-02
+- `29b604b` — feat: logo throughout project
+- `1f51da3` — chore: diary logo entry
+- *(this commit)* — feat: logo in TASK_TRACKER.html + push
+
+---
+
 ## 2026-04-08 — Session 1 continued: P0-01 React Project Setup
 
 ### Context
