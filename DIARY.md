@@ -593,3 +593,43 @@ The spec called for flat pricing (driveway $45, walkway $20, steps $10, salting 
 **Next task:** P0-08 — Requester: Rating and Review Form
 
 ---
+
+## 2026-04-08 — P0-08 Requester: Rating and Review Form
+
+### Pre-existing state
+`RateWorker.jsx` was a one-line stub.
+
+### Implementation
+
+**Two-phase component** controlled by `submitted` state:
+
+**Rating form (before submit):**
+- Header: "Rate Your Experience" + job address as subtitle
+- Interactive 5-star widget: hover previews (amber), click to select, scale transform on active stars, aria-labels for accessibility
+- Label beneath stars: Poor / Fair / Good / Great / Excellent! based on selected value
+- Review textarea (500 chars, counter)
+- "Would you hire again?" toggle buttons (👍 Yes / 👎 No) — click again to deselect; styled green/red when active
+- Worker's mock rating of the Requester (read-only): 5 stars + italic quoted comment
+- Error shown if Submit clicked with rating = 0
+- Submit button: "Submit Rating & Release Payment" → calls `setJobStatus(jobId, 'RELEASED')` then sets `submitted = true`
+
+**Confirmation screen (after submit):**
+- Green check circle (72px, green-bg background)
+- "Thanks for your feedback!" heading
+- "Payment will be released within 2–3 business days" message
+- Payment summary breakdown: total charged / platform fee / worker payout
+- Two CTAs: "View Job Summary" (→ /requester/jobs/:id) and "Post Another Job" (→ /requester/post-job)
+
+### Decisions
+- **Submit releases payment immediately in mock** — `setJobStatus('RELEASED')` is called on submit. In Phase 1 this will be an API call that triggers a Stripe payout. The mock behaviour matches the UX intent.
+- **Toggle for "Would hire again"** — clicking the same button again deselects it (sets to null). This matches common UX patterns for toggle selections and avoids forcing a choice.
+- **No navigation guard** — in Phase 0 there's no "are you sure?" if the user navigates back mid-rating. Not worth adding for a prototype.
+
+### Verification
+- `npm run lint` — 0 errors, 0 warnings
+
+**Commit:** *(this commit)* — `feat: P0-08 rate worker form`
+
+**Next task:** P0-09 — Worker: Earnings Dashboard
+
+---
