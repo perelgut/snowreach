@@ -5,9 +5,9 @@ import StatusPill from '../../components/StatusPill'
 const fmt = cents => '$' + (cents / 100).toFixed(2)
 
 export default function ActiveJob() {
-  const { jobs, setJobStatus, advanceJob } = useMock()
+  const { jobs, setJobStatus } = useMock()
   const [photoUploaded, setPhotoUploaded] = useState(false)
-  const [checkedIn, setCheckedIn] = useState(false)
+  const [_checkedIn, setCheckedIn] = useState(false)
 
   const activeJob = jobs.find(j => ['CONFIRMED', 'IN_PROGRESS'].includes(j.status))
   const completeJob = jobs.find(j => j.status === 'COMPLETE')

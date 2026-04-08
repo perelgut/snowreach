@@ -86,6 +86,7 @@ export function MockStateProvider({ children }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useMock() {
   return useContext(Ctx)
 }
