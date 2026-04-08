@@ -1,0 +1,205 @@
+@startuml UC-15-Stage1
+' SnowReach - Use Case Diagrams - Group D: Dispute Resolution
+' UC-15 Stages 1-5
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-15 Stage 1 - Dispute Initiation
+
+start
+
+:Precondition: Job is in Complete state.\nRequester must be within:\n- 2-hr quality dispute window, OR\n- 24-hr property damage window.;
+
+:Requester taps "Raise a Dispute";
+
+if (Dispute window has expired?) then (yes)
+  :System rejects dispute attempt\nRequester shown applicable window\nFunds already released;
+  stop
+else (within window)
+endif
+
+:Requester selects dispute type\n(Quality / Property Damage / Both);
+
+:Requester submits written description\nand up to 5 supporting photos;
+
+:Job status -> Awaiting Worker Response\nPhase 2: escrow funds frozen\nPhase 1: payment collection paused\nBoth parties notified;
+
+:Continue to Stage 2;
+
+stop
+
+@enduml
+
+@startuml UC-15-Stage2
+' SnowReach - Use Case Diagrams - Group D: Dispute Resolution
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-15 Stage 2 - Worker Response
+
+start
+
+:Precondition: Job is Awaiting Worker Response.\n48-hour response window is active.;
+
+:Worker receives dispute notification;
+
+if (Worker decision within 48 hours?) then (Accept dispute in full)
+  :Worker agrees to complete refund\n(irrevocable);
+  :Job -> Refunded\nImmediate full refund to Requester\nAdmin Review bypassed;
+  stop
+elseif (Worker submits response?) then (yes)
+  :Worker submits: written account of events,\nup to 5 photos, optional proposed settlement;
+  :Continue to Stage 3 - Admin Review;
+  stop
+else (No response - 48hr expires)
+  :Non-response flagged on Worker account\nCase auto-proceeds to Admin Review;
+  :Continue to Stage 3 - Admin Review;
+  stop
+endif
+
+@enduml
+
+@startuml UC-15-Stage3
+' SnowReach - Use Case Diagrams - Group D: Dispute Resolution
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-15 Stage 3 - Admin Review
+
+start
+
+:Evidence package compiled automatically:\n- Original job request and photos\n- Completion photos\n- Dispute description and photos\n- Worker response (if submitted)\n- Full job timeline\n- On-site personnel disclosure\n- Both parties' dispute rates and fraud flags;
+
+:Admin reviews evidence package\n(up to 5 business days);
+
+if (Admin ruling?) then (Full payment to Worker)
+  :85% to Worker / 15% to App Owner;
+  :Continue to Stage 5 - Appeal Window;
+  stop
+elseif (Full refund to Requester?) then (yes)
+  :100% refund to Requester / no commission;
+  :Continue to Stage 5 - Appeal Window;
+  stop
+elseif (Partial split?) then (yes)
+  :Proportional award\nWorker receives their % x 85%;
+  :Continue to Stage 5 - Appeal Window;
+  stop
+elseif (Return to Complete?) then (yes)
+  :Worker notified with 24-hr deadline\nFunds held;
+  :Continue to Stage 4 - Return to Complete;
+  stop
+else (Increased payment)
+  :Requester invited to authorise\nadditional voluntary charge;
+  if (Requester consents?) then (yes)
+    :Additional charge processed;
+  else (declines)
+    :Ruling issued on original escrowed amount only;
+  endif
+  :Continue to Stage 5 - Appeal Window;
+  stop
+endif
+
+@enduml
+
+@startuml UC-15-Stage4
+' SnowReach - Use Case Diagrams - Group D: Dispute Resolution
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-15 Stage 4 - Return to Complete
+
+start
+
+:Precondition: Admin ruled that Worker\nmust return to complete the job\nwithin 24 hours.;
+
+:Worker notified of ruling and 24-hour deadline;
+
+if (Worker returns within 24 hours?) then (yes)
+  :Worker taps "Start Job"\nLiability acknowledgement repeated;
+  :Worker performs remaining work;
+  :Worker marks Complete again;
+  :New 2-hour quality dispute window opens\nRequester notified;
+  if (Requester action?) then (Approves)
+    :Job -> Released;
+    :Continue to Stage 5 - Appeal Window;
+    stop
+  else (Re-disputes within new 2-hr window)
+    :UC-15 Stage 1 restarts;
+    stop
+  endif
+else (Worker fails to return - 24hr expires)
+  :Ruling auto-converts to full refund\nJob -> Refunded;
+  stop
+endif
+
+@enduml
+
+@startuml UC-15-Stage5
+' SnowReach - Use Case Diagrams - Group D: Dispute Resolution
+
+skinparam ActivityBackgroundColor #f5f5f5
+skinparam ActivityBorderColor #555555
+skinparam ActivityDiamondBackgroundColor #fff3cd
+skinparam ActivityDiamondBorderColor #856404
+skinparam NoteBackgroundColor #e8f4f8
+skinparam NoteBorderColor #2980b9
+skinparam ArrowColor #333333
+
+title UC-15 Stage 5 - Appeal Window
+
+start
+
+:Precondition: Admin ruling has been issued.\n48-hour appeal window is now open.\nBoth parties notified with written explanation.;
+
+if (Either party files appeal within 48 hours?) then (yes)
+  :Grounds stated:\nnew evidence / procedural error / factual error\nFrivolous appeal noted on account.\nApp Owner has read-only oversight\nand may direct reconsideration in\nexceptional circumstances.;
+  :Designated senior Admin reviews\n(3-business-day target)\n(different Admin from original ruling);
+  if (Final ruling?) then (For Worker)
+    :Job -> Released\nNo further appeal permitted;
+    stop
+  elseif (For Requester?) then (yes)
+    :Job -> Refunded\nNo further appeal permitted;
+    stop
+  else (Partial split)
+    :Job -> Settled\nNo further appeal permitted;
+    stop
+  endif
+else (No appeal - 48hr expires)
+  :Original ruling executed\nFunds disbursed per ruling;
+  if (Ruling outcome?) then (Worker wins)
+    :Job -> Released;
+    stop
+  elseif (Requester wins?) then (yes)
+    :Job -> Refunded;
+    stop
+  else (Partial split)
+    :Job -> Settled;
+    stop
+  endif
+endif
+
+@enduml
