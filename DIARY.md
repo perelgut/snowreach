@@ -201,6 +201,30 @@ Complete rewrite with the following structure:
 
 ---
 
+## 2026-04-08 — Logo added
+
+### Logo description
+Two PNGs provided by user in `images/`:
+- `YoSnowMow.png` — colour version: oval split blue (left, winter/night snow worker with stars) and green (right, summer lawn mower worker with sun), handshake at centre bottom, "YoSnowMow" text in blue/green below
+- `YoSnowMowBW.png` — B&W version: same composition in black and white
+
+**Note for future:** Both PNGs have a gray background — not transparent. A transparent SVG version would be ideal for production use on coloured backgrounds.
+
+### Website changes
+Replaced the placeholder SVG snowflake icon in all three layout headers with the actual logo:
+- **RequesterLayout** (white header): colour logo at `height: 48px`
+- **WorkerLayout** (dark blue `#0F4FA8` header): B&W logo at `height: 48px`
+- **AdminLayout** (dark `#1A202C` sidebar): B&W logo at `height: 52px`
+
+Logo images copied to `frontend/src/assets/logo.png` and `logo-bw.png` and imported as ES module assets (Vite processes them for cache-busting).
+
+### Documentation changes
+Prepended centred logo image (height 120px) to all 11 markdown docs in `docs/` and to `DIARY.md`.
+
+**Commit:** `29b604b` — `feat: add YoSnowMow logo throughout project`
+
+---
+
 ## 2026-04-08 — Session 1 continued: P0-01 React Project Setup
 
 ### Context
