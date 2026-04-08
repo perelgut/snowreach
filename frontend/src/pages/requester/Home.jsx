@@ -16,7 +16,9 @@ export default function RequesterHome() {
         borderRadius: 16, padding: 'var(--sp-10) var(--sp-8)', marginBottom: 'var(--sp-8)',
         color: '#fff', textAlign: 'center',
       }}>
-        <img src={logoColor} alt="YoSnowMow" style={{ height: 360, width: 'auto', marginBottom: 16, display: 'inline-block' }} />
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+          <img src={logoColor} alt="YoSnowMow" style={{ height: 360, width: 'auto' }} />
+        </div>
         <h1 style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, marginBottom: 8 }}>Snow cleared or lawns mowed. Fast.</h1>
         <p style={{ opacity: .85, marginBottom: 28, fontSize: 'var(--text-md)' }}>Connect with a local worker in minutes.</p>
         <Link to="/requester/post-job" className="btn btn-lg" style={{ background: '#fff', color: '#1A6FDB' }}>

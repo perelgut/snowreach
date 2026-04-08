@@ -11,9 +11,9 @@ export default function RequesterLayout() {
       {/* Top header */}
       <header style={{
         position: 'sticky', top: 0, zIndex: 50,
-        height: 'var(--header-h)', background: '#fff',
+        minHeight: 'var(--header-h)', background: '#fff',
         borderBottom: '1px solid var(--gray-200)',
-        display: 'flex', alignItems: 'center', padding: '0 var(--sp-6)', gap: 'var(--sp-8)',
+        display: 'flex', alignItems: 'center', padding: 'var(--sp-2) var(--sp-6)', gap: 'var(--sp-8)',
         boxShadow: 'var(--shadow-sm)',
       }}>
         <NavLink to="/requester" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}>
