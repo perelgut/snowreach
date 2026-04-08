@@ -1,0 +1,76 @@
+/* Button component styles — uses design tokens from tokens.css */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-base);
+  transition: opacity 0.15s, transform 0.1s, background 0.15s;
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.btn:hover:not(.disabled) { opacity: 0.88; }
+.btn:active:not(.disabled) { transform: scale(0.97); }
+
+/* ── Variants ── */
+.primary {
+  background: var(--color-primary);
+  color: var(--color-white);
+}
+.primary:hover:not(.disabled) {
+  background: var(--color-primary-dark);
+  opacity: 1;
+}
+
+.secondary {
+  background: var(--color-white);
+  color: var(--color-primary);
+  border: 1.5px solid var(--color-primary);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--color-gray-600);
+}
+.ghost:hover:not(.disabled) {
+  background: var(--color-gray-100);
+  opacity: 1;
+}
+
+.danger {
+  background: var(--color-error);
+  color: var(--color-white);
+}
+
+/* ── Sizes ── */
+.sm {
+  height: 32px;
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+.md {
+  height: 40px;
+  padding: 0 var(--space-5);
+}
+
+.lg {
+  height: 48px;
+  padding: 0 var(--space-6);
+  font-size: var(--font-size-md);
+}
+
+/* ── States ── */
+.fullWidth {
+  width: 100%;
+}
+
+.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
