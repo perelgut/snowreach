@@ -151,6 +151,51 @@ Claude Code session initiated in `C:\Users\perel\claude_code\yosnowmow`. The pro
 - ENV-04 ✓ Complete
 - ENV-05 ✓ Complete
 
-**Next task:** P0-01 — React Project Setup
+**Next task:** P0-02 — Design System
+
+---
+
+## 2026-04-08 — Session 1 continued: P0-01 React Project Setup
+
+### Context
+The frontend was already well past P0-01 scaffolding — Phase 0 prototype was actively in use. The task was to verify the setup met spec and fill in gaps.
+
+### Version deviations from spec (accepted)
+| Spec | Installed | Decision |
+|------|-----------|----------|
+| React 18.x | React 19.2.4 | Accepted — already in use, no breaking changes for Phase 0 |
+| React Router 6.x | React Router 7.14.0 | Accepted — API compatible for our usage |
+| Vite 5.x | Vite 8.0.1 | Accepted |
+| ESLint 8.x / `.eslintrc.cjs` | ESLint 9.x / `eslint.config.js` (flat config) | Accepted — newer flat config format, functionally equivalent |
+
+### Lint errors fixed (4)
+
+1. **`MockStateContext.jsx:89`** — `react-refresh/only-export-components`: `useMock()` hook exported from same file as `MockStateProvider` component. Fix: added `// eslint-disable-next-line react-refresh/only-export-components` comment. Rationale: moving the hook to a separate file would require touching many import sites in the existing prototype; disable comment is least invasive.
+
+2. **`RequesterLayout.jsx:1`** — `no-unused-vars`: `useNavigate` imported but not used. Fix: removed from import.
+
+3. **`ActiveJob.jsx:8`** — `no-unused-vars`: `advanceJob` destructured from `useMock()` but not used. Fix: removed from destructuring.
+
+4. **`ActiveJob.jsx:10`** — `no-unused-vars`: `checkedIn` state variable set via `setCheckedIn` but value never read. Fix: renamed to `_checkedIn` (matches `varsIgnorePattern: '^[A-Z_]'`). State retained for prototype completeness.
+
+### Files added/modified
+
+- **`.prettierrc`** — created: `semi:false`, `singleQuote:true`, `tabWidth:2`, `trailingComma:'es5'`, `printWidth:100`
+- **`package.json`** — added `format` script: `prettier --write src/`; `prettier ^3.8.1` added to devDependencies via `npm install --save-dev prettier`
+- **`vite.config.js`** — added `server.port: 3000` and `server.proxy: { '/api': 'http://localhost:8080' }` for future backend integration
+- **`src/App.jsx`** — added imports and routes for: `RateWorker`, `WorkerProfile`, `Register`, `Analytics`, `Login`, `Signup`
+- **`src/pages/requester/RateWorker.jsx`** — placeholder (P0-05)
+- **`src/pages/requester/WorkerProfile.jsx`** — placeholder (P0-05)
+- **`src/pages/worker/Register.jsx`** — placeholder (P1-06)
+- **`src/pages/admin/Analytics.jsx`** — placeholder (P1-19)
+- `Login.jsx` and `Signup.jsx` already existed from ENV-05
+
+### Verification
+- `npm run lint` — 0 errors, 0 warnings
+- Dev server starts on port 3000 (`npm run dev`)
+
+**Commit:** `f1b14b1` — `feat: complete P0-01 React project setup`
+
+**Next task:** P0-02 — Design System
 
 ---
