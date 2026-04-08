@@ -153,7 +153,51 @@ Claude Code session initiated in `C:\Users\perel\claude_code\yosnowmow`. The pro
 - ENV-04 ✓ Complete
 - ENV-05 ✓ Complete
 
-**Next task:** P0-03 — Shared Components
+**Next task:** P0-04 — Navigation Shell
+
+---
+
+## 2026-04-08 — P0-03 Shared Components — complete
+
+### Components built
+All in `frontend/src/components/` with CSS Modules:
+
+| Component | Key details |
+|---|---|
+| `Button` | 4 variants (primary/secondary/ghost/danger), 3 sizes (sm/md/lg), `loading` prop shows Spinner |
+| `Input` | `label`, `error`, `hint`, `multiline`, auto-id from label text |
+| `Card` | `padding` (sm/md/lg), `shadow`, `header`/`footer` slots, `onClick` hover-lift |
+| `Modal` | `createPortal`, Escape + backdrop close, focus-on-open, 3 sizes, ARIA `role="dialog"` |
+| `Badge` | 5 variants (default/primary/success/warning/error), inline token styles |
+| `StatusPill` | All 11 job states mapped, explicit bg/text pairs derived from token hex values |
+| `Spinner` | Pure CSS `@keyframes ysm-spin`, 3 sizes, configurable colour |
+
+### Migration of existing components
+- `StatusPill.jsx` (flat) → re-exports from `StatusPill/StatusPill.jsx`; all 11 states updated to match current token values; `IN_PROGRESS` colour corrected to `#9B59B6` (was `#8E44AD`)
+- `Modal.jsx` (flat) → re-exports from `Modal/Modal.jsx`; added `size` prop and `aria` attributes
+- Backward compat: all existing `import X from '../../components/X'` paths still resolve
+
+### Barrel export
+`components/index.js` — `import { Button, Card, Modal } from '../components'` works for all new code.
+
+### Design decision: StatusPill background tint
+Spec said "background is colorVar at 15% opacity". `color-mix()` approach was attempted but is complex and has browser-support caveats. Used explicit paired hex values instead (same approach as original prototype, now consistent with P0-02 token colours).
+
+**Commit:** `53975d8` — `feat: P0-03 shared component library`
+
+---
+
+## 2026-04-08 — Fix: duplicate GitHub Actions workflow
+
+**Problem:** Every push showed two Actions entries — one green ✓, one `!` → `X` (cancelled). User noticed and asked why.
+
+**Root cause:** `deploy.yml` (workflow ID 255775858) was already in the repo from before our session, fully working. In ENV-05, `frontend-deploy.yml` was created as a placeholder then later filled with real content to fix the Pages 404. Both had `concurrency: group: pages, cancel-in-progress: true`. On every push both workflows started; whichever was slower was cancelled.
+
+**Fix:** Deleted `frontend-deploy.yml`. `deploy.yml` remains as the single canonical Pages deployment workflow.
+
+**Note:** `backend-deploy.yml` still shows `X` on every push — it is an empty placeholder. This is expected and will be resolved in P1-02.
+
+**Commit:** `2b3fe07` — `chore: remove duplicate frontend-deploy.yml workflow`
 
 ---
 
