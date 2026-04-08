@@ -252,6 +252,24 @@ All commits from this session pushed to `origin/main` (`perelgut/YoSnowMow`).
 
 ---
 
+## 2026-04-08 — Build fix: Login.jsx and Signup.jsx missing default exports
+
+**Problem:** GitHub Actions build failed with `[MISSING_EXPORT]` errors for `Login.jsx` and `Signup.jsx`. Both files were created in ENV-05 as comment-only placeholders (`// TODO: implement in P1-06`) with no `export default`. Rolldown (Vite's production bundler) treats this as a hard error.
+
+**Fix:** Added minimal stub components to both files:
+```jsx
+export default function Login() { return <div>Login — coming soon</div> }
+export default function Signup() { return <div>Sign Up — coming soon</div> }
+```
+
+**Why only these two?** The other four pages added in P0-01 (`RateWorker`, `WorkerProfile`, `Register`, `Analytics`) were written with proper default exports from the start. The `Login`/`Signup` files were created in ENV-05 before the routing was wired up, so they had no component body.
+
+**Lesson learned:** Any `.jsx` file that is imported by App.jsx or any router must have a `export default function ...` even if it is a one-liner stub. Comment-only placeholders are only safe for files that are not yet imported anywhere.
+
+**Commit:** `f12b84f` — `fix: add missing default exports to Login and Signup placeholders`
+
+---
+
 ## 2026-04-08 — Session 1 continued: P0-01 React Project Setup
 
 ### Context
