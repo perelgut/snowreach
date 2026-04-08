@@ -1,0 +1,4 @@
+# Prod overrides — filled in P1-23
+logging:
+  level:
+    com.snowreach: INFO

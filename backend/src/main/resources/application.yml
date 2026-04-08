@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: snowreach-api
+  profiles:
+    active: ${SPRING_PROFILE:dev}
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

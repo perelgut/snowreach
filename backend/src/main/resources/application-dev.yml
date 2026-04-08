@@ -1,0 +1,4 @@
+# Dev overrides — filled in P1-03
+logging:
+  level:
+    com.snowreach: DEBUG
