@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useMock } from '../../context/MockStateContext'
 import StatusPill from '../../components/StatusPill'
+import logoColor from '../../assets/logo.png'
 
 function fmt(cents) { return '$' + (cents / 100).toFixed(2) }
 
@@ -15,9 +16,9 @@ export default function RequesterHome() {
         borderRadius: 16, padding: 'var(--sp-10) var(--sp-8)', marginBottom: 'var(--sp-8)',
         color: '#fff', textAlign: 'center',
       }}>
-        <div style={{ fontSize: 48, marginBottom: 12 }}>❄️</div>
-        <h1 style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, marginBottom: 8 }}>Snow cleared. Fast.</h1>
-        <p style={{ opacity: .85, marginBottom: 28, fontSize: 'var(--text-md)' }}>Connect with a local snowblower owner in minutes.</p>
+        <img src={logoColor} alt="YoSnowMow" style={{ height: 120, width: 'auto', marginBottom: 16 }} />
+        <h1 style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, marginBottom: 8 }}>Snow cleared or lawns mowed. Fast.</h1>
+        <p style={{ opacity: .85, marginBottom: 28, fontSize: 'var(--text-md)' }}>Connect with a local worker in minutes.</p>
         <Link to="/requester/post-job" className="btn btn-lg" style={{ background: '#fff', color: '#1A6FDB' }}>
           ➕ Post a Job
         </Link>

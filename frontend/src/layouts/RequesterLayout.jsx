@@ -17,7 +17,7 @@ export default function RequesterLayout() {
         boxShadow: 'var(--shadow-sm)',
       }}>
         <NavLink to="/requester" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}>
-          <img src={logoColor} alt="YoSnowMow" style={{ height: 48, width: 'auto' }} />
+          <img src={logoColor} alt="YoSnowMow" style={{ height: 56, width: 'auto' }} />
         </NavLink>
 
         <nav className="hide-mobile" style={{ display: 'flex', gap: 'var(--sp-6)', flex: 1 }}>
