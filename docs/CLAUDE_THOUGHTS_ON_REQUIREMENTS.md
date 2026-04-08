@@ -1,3 +1,5 @@
+<p align="center"><img src="../images/YoSnowMow.png" alt="YoSnowMow" height="120" /></p>
+
 # Claude Thoughts on Requirements
 ## SnowReach — Requirements v2.1 Review
 **Date:** 2026-03-28

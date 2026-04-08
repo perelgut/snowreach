@@ -1,4 +1,5 @@
 import { Outlet, NavLink } from 'react-router-dom'
+import logoBW from '../assets/logo-bw.png'
 
 const NAV = [
   { to: '/admin', icon: '📊', label: 'Dashboard', end: true },
@@ -16,18 +17,11 @@ export default function AdminLayout() {
         display: 'flex', flexDirection: 'column',
         position: 'sticky', top: 0, height: '100vh', flexShrink: 0,
       }}>
-        <div style={{ padding: 'var(--sp-5) var(--sp-5)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <svg width="26" height="26" viewBox="0 0 30 30" fill="none">
-              <circle cx="15" cy="15" r="15" fill="rgba(255,255,255,.12)"/>
-              <line x1="15" y1="5" x2="15" y2="25" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
-              <line x1="5" y1="15" x2="25" y2="15" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
-              <line x1="8" y1="8" x2="22" y2="22" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
-              <line x1="22" y1="8" x2="8" y2="22" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
-            </svg>
-            <span style={{ color: '#fff', fontWeight: 800, fontSize: 15 }}>YoSnowMow</span>
-          </div>
-          <div style={{ marginTop: 4, fontSize: 11, color: 'rgba(255,255,255,.4)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: .5 }}>Admin Panel</div>
+        <div style={{ padding: 'var(--sp-4) var(--sp-5)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
+          <NavLink to="/admin">
+            <img src={logoBW} alt="YoSnowMow" style={{ height: 52, width: 'auto' }} />
+          </NavLink>
+          <div style={{ marginTop: 2, fontSize: 11, color: 'rgba(255,255,255,.4)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: .5 }}>Admin Panel</div>
         </div>
 
         <nav style={{ flex: 1, padding: 'var(--sp-4) var(--sp-3)' }}>

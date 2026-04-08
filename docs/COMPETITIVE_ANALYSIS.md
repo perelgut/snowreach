@@ -1,3 +1,5 @@
+<p align="center"><img src="../images/YoSnowMow.png" alt="YoSnowMow" height="120" /></p>
+
 # Competitive Analysis
 ## SnowReach — Neighbourhood Snow Clearing Marketplace
 **Date:** 2026-03-26

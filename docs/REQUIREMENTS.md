@@ -1,3 +1,5 @@
+<p align="center"><img src="../images/YoSnowMow.png" alt="YoSnowMow" height="120" /></p>
+
 # Requirements Document
 ## SnowReach — Neighbourhood Snow Clearing Marketplace
 **Version:** 2.3 (Under Review)

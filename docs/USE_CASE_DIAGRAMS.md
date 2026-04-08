@@ -1,3 +1,5 @@
+<p align="center"><img src="../images/YoSnowMow.png" alt="YoSnowMow" height="120" /></p>
+
 # USE_CASE_DIAGRAMS.md
 ## SnowReach — Use Case State Diagrams
 **Version:** 1.0

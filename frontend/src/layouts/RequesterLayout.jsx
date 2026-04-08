@@ -1,5 +1,6 @@
 import { Outlet, NavLink } from 'react-router-dom'
 import { useMock } from '../context/MockStateContext'
+import logoColor from '../assets/logo.png'
 
 export default function RequesterLayout() {
   const { mockUser } = useMock()
@@ -15,16 +16,8 @@ export default function RequesterLayout() {
         display: 'flex', alignItems: 'center', padding: '0 var(--sp-6)', gap: 'var(--sp-8)',
         boxShadow: 'var(--shadow-sm)',
       }}>
-        <NavLink to="/requester" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
-          <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
-            <circle cx="15" cy="15" r="15" fill="#1A6FDB"/>
-            <line x1="15" y1="5" x2="15" y2="25" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
-            <line x1="5" y1="15" x2="25" y2="15" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
-            <line x1="8" y1="8" x2="22" y2="22" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
-            <line x1="22" y1="8" x2="8" y2="22" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
-            <circle cx="15" cy="15" r="2.5" fill="#fff"/>
-          </svg>
-          <span style={{ fontWeight: 800, fontSize: 17, color: '#1A202C', letterSpacing: -.3 }}>YoSnowMow</span>
+        <NavLink to="/requester" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}>
+          <img src={logoColor} alt="YoSnowMow" style={{ height: 48, width: 'auto' }} />
         </NavLink>
 
         <nav className="hide-mobile" style={{ display: 'flex', gap: 'var(--sp-6)', flex: 1 }}>

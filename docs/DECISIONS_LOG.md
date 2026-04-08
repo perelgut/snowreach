@@ -1,3 +1,5 @@
+<p align="center"><img src="../images/YoSnowMow.png" alt="YoSnowMow" height="120" /></p>
+
 # Decisions Log
 ## SnowReach — Requirements Negotiation
 **Date:** 2026-03-26

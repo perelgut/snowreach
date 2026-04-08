@@ -1,3 +1,5 @@
+<p align="center"><img src="images/YoSnowMow.png" alt="YoSnowMow" height="120" /></p>
+
 # YoSnowMow — Development Diary
 
 This diary is a fanatically detailed record of every change made to the project, including the discussions and reasoning that led to each change. It is a raw technical log; a human-readable summary can be generated from it separately.
