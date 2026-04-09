@@ -5,12 +5,12 @@
 # GCP Secret Manager — never hard-code credentials here.
 #
 # Firebase configuration (P1-01)
-#   FIREBASE_PROJECT_ID              — snowreach-dev
+#   FIREBASE_PROJECT_ID              — yosnowmow-dev
 #   FIREBASE_SERVICE_ACCOUNT_PATH    — path to service account JSON
 #                                      (download from Firebase Console
 #                                       → Project Settings → Service accounts)
-#                                      e.g. /secrets/snowreach-dev-sa.json
-#   FIREBASE_AUDIT_PROJECT_ID        — snowreach-audit
+#                                      e.g. /secrets/yosnowmow-dev-sa.json
+#   FIREBASE_AUDIT_PROJECT_ID        — yosnowmow-audit
 #   FIREBASE_AUDIT_SERVICE_ACCOUNT_PATH — path to audit project service account
 #
 # These variables are consumed by FirebaseConfig.java (created in P1-04).
@@ -19,11 +19,11 @@
 # ============================================================
 
 firebase:
-  project-id:              ${FIREBASE_PROJECT_ID:snowreach-dev}
+  project-id:              ${FIREBASE_PROJECT_ID:yosnowmow-dev}
   service-account-path:    ${FIREBASE_SERVICE_ACCOUNT_PATH:}
-  audit-project-id:        ${FIREBASE_AUDIT_PROJECT_ID:snowreach-audit}
+  audit-project-id:        ${FIREBASE_AUDIT_PROJECT_ID:yosnowmow-audit}
   audit-service-account-path: ${FIREBASE_AUDIT_SERVICE_ACCOUNT_PATH:}
 
 logging:
   level:
-    com.snowreach: DEBUG
+    com.yosnowmow: DEBUG

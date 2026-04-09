@@ -51,7 +51,7 @@ TECH STACK:
 
 FILE STRUCTURE ROOT: snowreach/
   frontend/   — React/Vite app
-  backend/    — Spring Boot app (package com.snowreach)
+  backend/    — Spring Boot app (package com.yosnowmow)
   firebase/   — Firebase config files (firestore.rules, storage.rules, firebase.json)
   .github/workflows/ — CI/CD pipelines
 
@@ -526,7 +526,7 @@ snowreach/
 │   └── src/
 │       ├── main/
 │       │   ├── java/com/snowreach/
-│       │   │   ├── SnowReachApplication.java
+│       │   │   ├── YoSnowMowApplication.java
 │       │   │   ├── config/
 │       │   │   │   ├── CorsConfig.java
 │       │   │   │   ├── FirebaseConfig.java
@@ -735,28 +735,28 @@ mkdir -p docs
 
 Create each file below. Files marked **[placeholder]** get a single comment line; files marked **[skeleton]** get meaningful starter content.
 
-**`backend/src/main/java/com/snowreach/SnowReachApplication.java`** [skeleton]:
+**`backend/src/main/java/com/snowreach/YoSnowMowApplication.java`** [skeleton]:
 ```java
-package com.snowreach;
+package com.yosnowmow;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class SnowReachApplication {
+public class YoSnowMowApplication {
     public static void main(String[] args) {
-        SpringApplication.run(SnowReachApplication.class, args);
+        SpringApplication.run(YoSnowMowApplication.class, args);
     }
 }
 ```
 
-All other Java files: [placeholder] — one line: `package com.snowreach.XXX; // TODO: implement in task PX-XX`
+All other Java files: [placeholder] — one line: `package com.yosnowmow.XXX; // TODO: implement in task PX-XX`
 
 **`backend/src/main/resources/application.yml`** [skeleton]:
 ```yaml
 spring:
   application:
-    name: snowreach-api
+    name: yosnowmow-api
   profiles:
     active: ${SPRING_PROFILE:dev}
 
@@ -775,7 +775,7 @@ management:
 # Dev overrides — filled in P1-03
 logging:
   level:
-    com.snowreach: DEBUG
+    com.yosnowmow: DEBUG
 ```
 
 **`backend/src/main/resources/application-prod.yml`** [skeleton]:
@@ -783,7 +783,7 @@ logging:
 # Prod overrides — filled in P1-23
 logging:
   level:
-    com.snowreach: INFO
+    com.yosnowmow: INFO
 ```
 
 **`frontend/src/main.jsx`** [skeleton]:
@@ -2070,8 +2070,8 @@ Provide complete content for both Markdown files.
 | Firebase JS SDK | 10.x | React client-side Auth + Firestore reads |
 
 ### Assumptions
-- Two Firebase projects created: `snowreach-dev` and `snowreach-prod`
-- A separate Firebase project `snowreach-audit` hosts the audit log Firestore
+- Two Firebase projects created: `yosnowmow-dev` and `yosnowmow-prod`
+- A separate Firebase project `yosnowmow-audit` hosts the audit log Firestore
 - Service account JSON files are NEVER committed to Git (.gitignore covers them)
 - Firebase Emulator Suite used for all local development from Phase 1 onward
 
@@ -2108,8 +2108,8 @@ This is a setup + configuration task. Produce the following files:
 2. firebase/.firebaserc:
 {
   "projects": {
-    "default": "snowreach-dev",
-    "prod": "snowreach-prod"
+    "default": "yosnowmow-dev",
+    "prod": "yosnowmow-prod"
   }
 }
 
@@ -2224,10 +2224,10 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
       - name: Build and push Docker image
         run: |
-          gcloud builds submit backend/ --tag gcr.io/${{ secrets.GOOGLE_CLOUD_PROJECT }}/snowreach-api:${{ github.sha }}
+          gcloud builds submit backend/ --tag gcr.io/${{ secrets.GOOGLE_CLOUD_PROJECT }}/yosnowmow-api:${{ github.sha }}
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy snowreach-api             --image gcr.io/${{ secrets.GOOGLE_CLOUD_PROJECT }}/snowreach-api:${{ github.sha }}             --region northamerica-northeast1             --platform managed             --min-instances 1             --max-instances 10             --memory 512Mi             --set-secrets FIREBASE_PROJECT_ID=FIREBASE_PROJECT_ID:latest             --set-secrets FIREBASE_SERVICE_ACCOUNT_PATH=FIREBASE_SERVICE_ACCOUNT_PATH:latest             --set-secrets STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest             --set-secrets STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest             --set-secrets SENDGRID_API_KEY=SENDGRID_API_KEY:latest             --set-secrets MAPS_API_KEY=MAPS_API_KEY:latest             --allow-unauthenticated
+          gcloud run deploy yosnowmow-api             --image gcr.io/${{ secrets.GOOGLE_CLOUD_PROJECT }}/yosnowmow-api:${{ github.sha }}             --region northamerica-northeast1             --platform managed             --min-instances 1             --max-instances 10             --memory 512Mi             --set-secrets FIREBASE_PROJECT_ID=FIREBASE_PROJECT_ID:latest             --set-secrets FIREBASE_SERVICE_ACCOUNT_PATH=FIREBASE_SERVICE_ACCOUNT_PATH:latest             --set-secrets STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest             --set-secrets STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest             --set-secrets SENDGRID_API_KEY=SENDGRID_API_KEY:latest             --set-secrets MAPS_API_KEY=MAPS_API_KEY:latest             --allow-unauthenticated
 
 3. .github/workflows/frontend-deploy.yml:
 name: Frontend Deploy
@@ -2313,7 +2313,7 @@ Files to create/update:
   backend/src/main/resources/application.yml
   backend/src/main/resources/application-dev.yml
   backend/src/main/resources/application-prod.yml
-  backend/src/main/java/com/snowreach/SnowReachApplication.java
+  backend/src/main/java/com/snowreach/YoSnowMowApplication.java
   backend/src/main/java/com/snowreach/config/CorsConfig.java
   backend/src/main/java/com/snowreach/exception/GlobalExceptionHandler.java
   backend/src/main/java/com/snowreach/exception/JobNotFoundException.java
@@ -2338,7 +2338,7 @@ Files to create/update:
    Build plugin: spring-boot-maven-plugin
 
 2. application.yml (base, all profiles inherit):
-   spring.application.name: snowreach-api
+   spring.application.name: yosnowmow-api
    spring.profiles.active: ${SPRING_PROFILE:dev}
    server.port: 8080
    management.endpoints.web.exposure.include: health
@@ -2358,17 +2358,17 @@ Files to create/update:
    snowreach.firebase.use-emulator: true
    snowreach.firebase.emulator-host: localhost:8080
    spring.quartz.job-store-type: memory
-   logging.level.com.snowreach: DEBUG
+   logging.level.com.yosnowmow: DEBUG
    logging.level.org.springframework.security: DEBUG
 
 4. application-prod.yml:
    snowreach.firebase.use-emulator: false
    spring.quartz.job-store-type: memory
-   logging.level.com.snowreach: INFO
+   logging.level.com.yosnowmow: INFO
 
 5. CorsConfig.java:
    @Configuration that registers a CorsFilter allowing:
-   - Origins: http://localhost:3000, https://snowreach-dev.web.app, https://snowreach.ca
+   - Origins: http://localhost:3000, https://yosnowmow-dev.web.app, https://snowreach.ca
      (load allowed origins from snowreach.cors.allowed-origins config property)
    - Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS
    - Headers: Authorization, Content-Type, Accept
@@ -2391,7 +2391,7 @@ Files to create/update:
    InvalidTransitionException extends RuntimeException (String message)
    PaymentException extends RuntimeException (String message, Throwable cause)
 
-8. SnowReachApplication.java: standard @SpringBootApplication main class.
+8. YoSnowMowApplication.java: standard @SpringBootApplication main class.
 
 Provide complete file contents for all files.
 ```
@@ -2843,7 +2843,7 @@ Algorithm:
 8. Return uid list.
 
 Also annotate with @Async so it does not block the POST /api/jobs response.
-Enable @EnableAsync in a config class or SnowReachApplication.
+Enable @EnableAsync in a config class or YoSnowMowApplication.
 
 Provide complete file contents including the @EnableAsync addition.
 ```
@@ -3625,7 +3625,7 @@ Provide complete file contents.
 | java.security.MessageDigest | JDK 21 | SHA-256 hashing |
 
 ### Assumptions
-- The audit Firestore is in a completely separate Firebase project (`snowreach-audit`)
+- The audit Firestore is in a completely separate Firebase project (`yosnowmow-audit`)
 - The chain head (hash of genesis entry) is seeded as all-zeros string
 - Daily integrity check runs at 2 AM via Quartz
 - AuditLogService.write() is the ONLY way to write to the audit log; no direct Firestore access
@@ -3913,7 +3913,7 @@ Files to create/update:
   docs/deployment-guide.md
 
 1. application-prod.yml (final production configuration):
-   logging.level.com.snowreach: INFO
+   logging.level.com.yosnowmow: INFO
    logging.level.root: WARN
    server.tomcat.max-threads: 200
    spring.quartz.job-store-type: memory
@@ -3932,10 +3932,10 @@ Files to create/update:
    - [ ] CORS config updated with production frontend URL
 
    BACKEND DEPLOYMENT:
-   gcloud builds submit backend/ --tag gcr.io/PROJECT_ID/snowreach-api:v1.0.0
-   gcloud run deploy snowreach-api --image gcr.io/PROJECT_ID/snowreach-api:v1.0.0      --region northamerica-northeast1 --traffic 0
+   gcloud builds submit backend/ --tag gcr.io/PROJECT_ID/yosnowmow-api:v1.0.0
+   gcloud run deploy yosnowmow-api --image gcr.io/PROJECT_ID/yosnowmow-api:v1.0.0      --region northamerica-northeast1 --traffic 0
    (Route 10% traffic, monitor for 30 min, then route 100%)
-   gcloud run services update-traffic snowreach-api --to-latest
+   gcloud run services update-traffic yosnowmow-api --to-latest
 
    FRONTEND DEPLOYMENT:
    cd frontend && npm run build
@@ -3949,10 +3949,10 @@ Files to create/update:
    - [ ] Stripe CLI: stripe listen --forward-to https://api.snowreach.ca/webhooks/stripe
          stripe trigger payment_intent.succeeded -- verify job transitions to CONFIRMED
    - [ ] SendGrid: send test email, verify delivery (check inbox, not spam)
-   - [ ] Firebase Hosting: visit https://snowreach-prod.web.app, verify React app loads
+   - [ ] Firebase Hosting: visit https://yosnowmow-prod.web.app, verify React app loads
 
    ROLLBACK PROCEDURE:
-   gcloud run services update-traffic snowreach-api --to-revisions PREVIOUS=100
+   gcloud run services update-traffic yosnowmow-api --to-revisions PREVIOUS=100
 
 Provide complete file contents.
 ```
@@ -4471,7 +4471,7 @@ Files to create:
 2. GCP Monitoring setup instructions (in runbook.md as gcloud commands):
 
    Uptime check (every 60s, 3-location majority):
-   gcloud monitoring uptime-checks create https snowreach-api-health      --resource-type=uptime-url      --hostname=snowreach-api-HASH-nn.a.run.app      --path=/api/health
+   gcloud monitoring uptime-checks create https yosnowmow-api-health      --resource-type=uptime-url      --hostname=yosnowmow-api-HASH-nn.a.run.app      --path=/api/health
 
    Alert policy: error rate > 1% over 5-minute window.
    Alert policy: p99 latency > 2000ms over 5-minute window.
@@ -4483,7 +4483,7 @@ Files to create:
    Sections:
    - Service overview (what SnowReach is, critical paths)
    - Alert descriptions and triage steps for each alert type
-   - How to check Cloud Run logs: gcloud run services logs read snowreach-api
+   - How to check Cloud Run logs: gcloud run services logs read yosnowmow-api
    - How to check Firestore emulator vs production (connection check)
    - How to manually trigger a payment release (via Admin dashboard)
    - How to roll back to previous Cloud Run revision

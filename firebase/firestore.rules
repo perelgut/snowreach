@@ -3,7 +3,7 @@
 // Full security rules are implemented in P1-21.
 // This file documents all 13 collection paths for reference.
 //
-// PRIMARY DATABASE (snowreach-dev / snowreach-prod):
+// PRIMARY DATABASE (yosnowmow-dev / yosnowmow-prod):
 //   /users/{uid}                        — account profile (both roles)
 //   /workers/{uid}                      — worker-specific data (equipment, service area, ratings)
 //   /jobs/{jobId}                       — job document (full lifecycle, all financial fields in cents)
@@ -17,7 +17,7 @@
 //   /fraudFlags/{flagId}                — automated fraud detection flags
 //   /adminReviewQueue/{id}              — items requiring manual admin review
 //
-// AUDIT DATABASE (snowreach-audit — separate Firebase project, append-only):
+// AUDIT DATABASE (yosnowmow-audit — separate Firebase project, append-only):
 //   /auditLog/{entryId}                 — SHA-256 hash-chained audit entries
 //
 // Deploy commands:

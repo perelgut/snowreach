@@ -1,6 +1,6 @@
 {
   "projects": {
-    "default": "snowreach-dev",
-    "prod":    "snowreach-prod"
+    "default": "yosnowmow-dev",
+    "prod":    "yosnowmow-prod"
   }
 }

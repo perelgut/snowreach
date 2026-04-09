@@ -1,6 +1,6 @@
 spring:
   application:
-    name: snowreach-api
+    name: yosnowmow-api
   profiles:
     active: ${SPRING_PROFILE:dev}
 
