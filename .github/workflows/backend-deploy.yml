@@ -2,14 +2,24 @@
 # backend-deploy.yml — Build and deploy the Spring Boot backend
 # to Google Cloud Run on every push to main that touches backend/
 #
+# Images are stored in Artifact Registry (Container Registry was
+# shut down March 2025). Repository must be created manually first:
+#   gcloud artifacts repositories create yosnowmow-api \
+#     --repository-format=docker \
+#     --location=northamerica-northeast2 \
+#     --project=YOUR_PROJECT_ID
+#
+# Image URL format:
+#   northamerica-northeast2-docker.pkg.dev/PROJECT/yosnowmow-api/yosnowmow-api:SHA
+#
 # Required GitHub Secrets (Settings → Secrets → Actions):
 #   GOOGLE_CLOUD_SERVICE_ACCOUNT  — GCP service account JSON with roles:
 #                                    Cloud Run Admin, Cloud Build Editor,
-#                                    Storage Admin, Service Account User
-#   GOOGLE_CLOUD_PROJECT          — GCP project ID (e.g. yosnowmow-dev)
+#                                    Artifact Registry Writer, Service Account User,
+#                                    Secret Manager Secret Accessor
+#   GOOGLE_CLOUD_PROJECT          — GCP project ID (e.g. yosnowmow-dev-a1b2c)
 #
-# These secrets are injected into Cloud Run via GCP Secret Manager
-# (not as plain env vars) — set them up in Secret Manager first:
+# Runtime secrets injected from GCP Secret Manager (set up manually in P1-02):
 #   FIREBASE_PROJECT_ID, FIREBASE_SERVICE_ACCOUNT_PATH,
 #   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
 #   SENDGRID_API_KEY, MAPS_API_KEY
@@ -22,6 +32,11 @@ on:
     branches: [main]
     paths:
       - backend/**
+
+env:
+  REGION: northamerica-northeast2
+  # Artifact Registry image path (region-docker.pkg.dev/project/repo/image)
+  IMAGE: northamerica-northeast2-docker.pkg.dev/${{ secrets.GOOGLE_CLOUD_PROJECT }}/yosnowmow-api/yosnowmow-api
 
 jobs:
   deploy:
@@ -42,13 +57,17 @@ jobs:
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
-      # Build the Docker image via Cloud Build and push to Container Registry.
+      # Configure Docker to authenticate to Artifact Registry
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker northamerica-northeast2-docker.pkg.dev --quiet
+
+      # Build the Docker image via Cloud Build and push to Artifact Registry.
       # Using Cloud Build (not local docker build) avoids needing Docker on the runner
       # and keeps build logs in GCP for auditability.
       - name: Build and push Docker image
         run: |
           gcloud builds submit backend/ \
-            --tag gcr.io/${{ secrets.GOOGLE_CLOUD_PROJECT }}/yosnowmow-api:${{ github.sha }}
+            --tag ${{ env.IMAGE }}:${{ github.sha }}
 
       # Deploy the new image to Cloud Run.
       # Secrets are pulled from GCP Secret Manager at runtime — never stored in
@@ -56,8 +75,8 @@ jobs:
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy yosnowmow-api \
-            --image gcr.io/${{ secrets.GOOGLE_CLOUD_PROJECT }}/yosnowmow-api:${{ github.sha }} \
-            --region northamerica-northeast2 \
+            --image ${{ env.IMAGE }}:${{ github.sha }} \
+            --region ${{ env.REGION }} \
             --platform managed \
             --min-instances 1 \
             --max-instances 10 \
