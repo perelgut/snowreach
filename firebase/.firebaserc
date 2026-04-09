@@ -1,6 +1,7 @@
 {
   "projects": {
     "default": "yosnowmow-dev",
-    "prod":    "yosnowmow-prod"
+    "prod":    "yosnowmow-prod",
+    "audit":
   }
 }
