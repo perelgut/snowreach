@@ -1,4 +1,29 @@
-# Dev overrides — filled in P1-03
+# ============================================================
+# application-dev.yml — Spring Boot dev profile overrides
+# ============================================================
+# Sensitive values are injected via environment variables or
+# GCP Secret Manager — never hard-code credentials here.
+#
+# Firebase configuration (P1-01)
+#   FIREBASE_PROJECT_ID              — snowreach-dev
+#   FIREBASE_SERVICE_ACCOUNT_PATH    — path to service account JSON
+#                                      (download from Firebase Console
+#                                       → Project Settings → Service accounts)
+#                                      e.g. /secrets/snowreach-dev-sa.json
+#   FIREBASE_AUDIT_PROJECT_ID        — snowreach-audit
+#   FIREBASE_AUDIT_SERVICE_ACCOUNT_PATH — path to audit project service account
+#
+# These variables are consumed by FirebaseConfig.java (created in P1-04).
+# For local dev: set them in a .env file or your IDE run configuration.
+# For Cloud Run: inject via --set-env-vars or GCP Secret Manager (P1-02).
+# ============================================================
+
+firebase:
+  project-id:              ${FIREBASE_PROJECT_ID:snowreach-dev}
+  service-account-path:    ${FIREBASE_SERVICE_ACCOUNT_PATH:}
+  audit-project-id:        ${FIREBASE_AUDIT_PROJECT_ID:snowreach-audit}
+  audit-service-account-path: ${FIREBASE_AUDIT_SERVICE_ACCOUNT_PATH:}
+
 logging:
   level:
     com.snowreach: DEBUG

@@ -839,3 +839,63 @@ Keeping them separate allows the template to be emailed to async reviewers who c
 **Phase 0 complete.** All 16 P0 tasks delivered. Next: Phase 1 — P1-01 Firebase Project Setup.
 
 ---
+
+## P1-01 — Firebase Project Setup
+
+**Goal:** Wire up Firebase SDK configuration files so Phase 1 development can begin with the Emulator Suite. No live Firebase project is created in this task — that requires manual steps in the Firebase Console (outside Claude Code's scope). All files are config/scaffolding only.
+
+### Files changed / created
+
+**`firebase/firebase.json`** (updated):
+- Added `"headers"` block: `/assets/**` gets `Cache-Control: public,max-age=31536000,immutable` for long-lived asset caching on Firebase Hosting
+- Added `"emulators"` block: Auth (9099), Firestore (8080), Storage (9199), Hosting (5000), UI (4000). Ports match the spec and prevent conflicts with backend port 8080 only on the remote — locally the Firestore emulator uses 8080 and the Spring Boot backend would use a different port during testing.
+
+**`firebase/.firebaserc`** (updated):
+- Replaced placeholder `YOUR_FIREBASE_PROJECT_ID` with `snowreach-dev` as default project
+- Added `"prod": "snowreach-prod"` alias
+- Switch commands: `firebase use default` (dev) / `firebase use prod` (production)
+
+**`firebase/firestore.rules`** (updated):
+- Added 30-line comment block at top documenting all 13 collection paths across both databases (primary + audit)
+- Existing DENY-ALL rule untouched — full security rules are P1-21
+
+**`frontend/src/services/firebase.js`** (written from TODO stub):
+- Initialises Firebase app from `VITE_` env vars (never hard-coded)
+- Exports `app`, `auth`, `db`, `storage` for import by any Phase 1 page
+- Emulator connection block: `if (VITE_USE_EMULATORS === 'true')` — connects Auth, Firestore, Storage to localhost ports
+- Guard pattern on emulator connect calls prevents double-connection on Vite HMR reloads (checks `_settings.host` / internal state flags)
+
+**`frontend/.env.example`** (new, safe to commit):
+- Template for all 6 `VITE_FIREBASE_*` vars, `VITE_API_BASE_URL`, and `VITE_USE_EMULATORS`
+- Instructions for local emulator workflow in header comments
+
+**`frontend/package.json`** + **`frontend/package-lock.json`** (updated):
+- Added `firebase@^11.10.0` as a production dependency
+- `npm install firebase@^11` was run; no audit issues that affect runtime
+
+**`backend/src/main/resources/application-dev.yml`** (updated):
+- Added Firebase config stanza with `${ENV_VAR:default}` Spring placeholder syntax
+- Documents the four Firebase env vars (`FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_PATH`, `FIREBASE_AUDIT_PROJECT_ID`, `FIREBASE_AUDIT_SERVICE_ACCOUNT_PATH`) with instructions for local dev vs. Cloud Run injection
+- These are consumed by `FirebaseConfig.java` (created in P1-04)
+
+### What was NOT done (manual steps required)
+
+The following require a browser + Google account and cannot be automated:
+
+1. Create Firebase project `snowreach-dev` in [Firebase Console](https://console.firebase.google.com)
+2. Create Firebase project `snowreach-prod`
+3. Create Firebase project `snowreach-audit` (audit log Firestore, append-only)
+4. Enable Firestore, Auth, Storage on each project
+5. Download service account JSONs; store outside the repo (e.g. `~/.secrets/`)
+6. Register a Web App in each project; copy config values into `.env.local`
+7. Add `FIREBASE_SERVICE_ACCOUNT` and `FIREBASE_PROJECT_ID` GitHub Secrets (Settings → Secrets → Actions)
+
+### Verification
+- `npm run lint` — 0 errors, 0 warnings
+- `npm run build` — clean, 53 modules (firebase.js not yet imported by any Phase 0 page; will grow in P1-04+)
+
+**Commit:** `feat: P1-01 Firebase project setup — config files and SDK init`
+
+**Next task:** P1-02 — GCP + Cloud Run + CI/CD
+
+---
