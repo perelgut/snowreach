@@ -1035,3 +1035,67 @@ These are needed before the workflows will succeed (added as work progresses):
 **Commit:** `feat: P1-03 Spring Boot skeleton — pom.xml, config YAMLs, exceptions, CORS`
 
 **Next task:** P1-04 — Firebase Auth Integration and RBAC
+
+---
+
+## P1-04 — Firebase Auth Integration and RBAC
+
+**Goal:** Verify Firebase ID tokens on every API request and enforce role-based access control via a custom annotation.
+
+### Files created / updated
+
+**`AuthenticatedUser.java`** (new record):
+- Java record: `uid`, `email`, `roles (List<String>)`
+- `hasRole(String role)` helper — case-sensitive match
+
+**`RequiresRole.java`** (new annotation):
+- `@Target(METHOD)` `@Retention(RUNTIME)`
+- `String[] value()` — one or more required roles; user needs any one
+
+**`FirebaseConfig.java`** (implemented):
+- Initialises two `FirebaseApp` instances: default (primary project) and `"audit"` (audit project)
+- Credentials: if `service-account-path` is set → load from file; otherwise → Application Default Credentials (ADC)
+- ADC works automatically in Cloud Run and with `gcloud auth application-default login`
+- Emulator mode: sets `FIRESTORE_EMULATOR_HOST` and `FIREBASE_AUTH_EMULATOR_HOST` system properties before app init
+- Guard against double-init (important for tests and hot reloads)
+- Exposes beans: `FirebaseAuth`, primary `Firestore`, `"auditFirestore"` Firestore
+
+**`FirebaseTokenFilter.java`** (implemented, `OncePerRequestFilter`):
+- Skips `/api/health`, `/actuator/**`, `/webhooks/**`
+- Extracts `Bearer` token from `Authorization` header
+- Calls `FirebaseAuth.verifyIdToken()` — validates signature, expiry, audience
+- On success: builds `AuthenticatedUser` from token claims, sets `UsernamePasswordAuthenticationToken` in `SecurityContextHolder`
+- Roles read from `"roles"` custom claim (List<String>) — falls back to empty list if not yet set
+- On failure: writes RFC 7807 401 JSON directly to response (does not propagate exception)
+
+**`SecurityConfig.java`** (implemented):
+- Stateless session, CSRF disabled
+- Permit: `/api/health`, `/actuator/**`, `/webhooks/**`
+- All other requests: authenticated
+- `FirebaseTokenFilter` inserted before `UsernamePasswordAuthenticationFilter`
+
+**`RbacInterceptor.java`** (implemented, `HandlerInterceptor`):
+- Runs `preHandle` on every request after token verification
+- Checks for `@RequiresRole` on the target handler method
+- No annotation → pass through (no-op)
+- Annotation present → checks `AuthenticatedUser.hasRole()` against each required role
+- No match → throws `AccessDeniedException` → caught by `GlobalExceptionHandler` → 403
+
+**`WebMvcConfig.java`** (new):
+- `WebMvcConfigurer` that registers `RbacInterceptor` for all paths
+
+### Key design decisions
+
+| Decision | Rationale |
+|---|---|
+| Roles in Firebase custom claims, not DB lookup per request | Zero Firestore reads per request for auth — custom claims are embedded in the JWT |
+| ADC fallback when no service account path | Cloud Run injects ADC automatically; no path needed in production config |
+| `System.setProperty` for emulator host | Firebase Admin SDK checks these before any SDK call; must be set before `initializeApp()` |
+| `AccessDeniedException` from `RbacInterceptor` | Caught by `GlobalExceptionHandler` which returns consistent RFC 7807 403 JSON |
+
+### Verification
+- `mvn compile` — BUILD SUCCESS, 0 errors
+
+**Commit:** `feat: P1-04 Firebase Auth token verification and RBAC`
+
+**Next task:** P1-05 — User Registration and Profile API
