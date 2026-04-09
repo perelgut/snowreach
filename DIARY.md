@@ -727,3 +727,56 @@ The spec called for flat pricing (driveway $45, walkway $20, steps $10, salting 
 **Next task:** P0-15 — Mobile Responsive Polish
 
 ---
+
+## 2026-04-08 — P0-15 Mobile Responsive Polish
+
+### Files changed
+
+**`src/styles/responsive.css`** (new):
+- Typography scaling: h1 reduced to `--text-xl` at ≤767px, `--text-lg` at ≤479px
+- Form inputs: `width: 100% !important` at mobile to prevent narrow field widths
+- `grid-2` / `grid-3` stacked to 1-col at mobile (these already existed in globals.css for ≤767px but this makes the override explicit)
+- `.table-scroll-wrapper` + `::after` gradient pseudo-element for right-edge scroll hint on mobile tables
+- `@keyframes slideInLeft` for Admin drawer slide animation
+- `.job-request-content` class adds `padding-bottom: 88px` on mobile to prevent content hiding behind the fixed action bar
+
+**`src/styles/globals.css`**:
+- Added `@import './responsive.css'` at top (after tokens import)
+
+**`src/components/Modal/Modal.module.css`**:
+- Added `@media (max-width: 767px)` block: backdrop aligns `flex-end` (bottom), panel gets `border-radius top-only`, `animation: mobileSlideUp` (slides up from bottom)
+- Drag handle hint: `::before` pseudo-element on `.header` — 36×4px gray pill centered at top of modal panel
+- Bottom sheet = standard mobile UX pattern (iOS/Android sheets); improves usability on small screens
+
+**`src/layouts/AdminLayout.jsx`**:
+- Added `drawerOpen` state (default false)
+- Extracted `NavItems` inner component shared by sidebar and drawer (avoids duplicating the nav map)
+- Mobile header: replaced icon-only nav row with hamburger button (☰) that sets `drawerOpen = true`
+- Mobile drawer overlay: dark backdrop + slide-in panel (`animation: slideInLeft`), × close button, same nav links, clicking backdrop closes drawer
+- `useNavigate` added for logo click in drawer
+- Main content wrapper gets `minWidth: 0` to prevent flex overflow
+
+**`src/pages/worker/JobRequest.jsx`**:
+- Added `className="job-request-content"` on root div for mobile bottom padding
+- Accept/Decline buttons now appear in two places:
+  - `hide-mobile` version inside the card (desktop)
+  - `hide-desktop` version as a `position: fixed` bar at screen bottom with `boxShadow` (mobile)
+- This matches the spec: "P0-10 Accept/Decline: fixed to bottom of screen on mobile"
+
+### What was already working
+- `.hide-mobile` / `.hide-desktop` breakpoints for nav switching
+- `grid-4` → 2-col at mobile (was in globals.css)
+- `grid-sidebar` → 1-col at mobile (was in globals.css)
+- RequesterLayout/WorkerLayout mobile bottom nav (fixed, hide-desktop)
+- Card padding reduction at mobile (globals.css)
+- Tables in `overflowX: auto` divs in Dashboard and Earnings
+
+### Verification
+- `npm run lint` — 0 errors, 0 warnings
+- `npm run build` — clean, 53 modules
+
+**Commit:** *(this commit)* — `feat: P0-15 mobile responsive polish`
+
+**Next task:** P0-16 — Stakeholder Review Materials
+
+---

@@ -79,7 +79,7 @@ export default function JobRequest() {
   )
 
   return (
-    <div style={{ maxWidth: 480, margin: '0 auto' }}>
+    <div className="job-request-content" style={{ maxWidth: 480, margin: '0 auto' }}>
       <h1 style={{ fontSize: 'var(--text-xl)', fontWeight: 800, marginBottom: 'var(--sp-6)' }}>Job Requests</h1>
 
       {/* Incoming request card */}
@@ -136,11 +136,23 @@ export default function JobRequest() {
           <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4 }}>After 15% platform fee + HST</div>
         </div>
 
-        {/* Buttons */}
-        <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
+        {/* Buttons — inline on desktop, visible in card */}
+        <div className="hide-mobile" style={{ display: 'flex', gap: 'var(--sp-3)' }}>
           <button className="btn btn-ghost" style={{ flex: '0 0 auto' }} onClick={handleDecline}>Decline</button>
           <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={handleAccept}>✓ Accept Job</button>
         </div>
+      </div>
+
+      {/* Buttons — fixed to bottom on mobile */}
+      <div className="hide-desktop" style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0,
+        background: '#fff', borderTop: '1px solid var(--gray-200)',
+        padding: 'var(--sp-3) var(--sp-4)',
+        boxShadow: '0 -4px 12px rgba(0,0,0,.08)',
+        display: 'flex', gap: 'var(--sp-3)', zIndex: 40,
+      }}>
+        <button className="btn btn-ghost" onClick={handleDecline}>Decline</button>
+        <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={handleAccept}>✓ Accept Job</button>
       </div>
     </div>
   )

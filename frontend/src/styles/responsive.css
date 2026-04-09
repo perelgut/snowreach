@@ -1,0 +1,107 @@
+/**
+ * responsive.css — P0-15 Mobile Responsive Polish
+ *
+ * This file contains responsive overrides that extend globals.css.
+ * Imported at the end of globals.css.
+ * Breakpoints: 375px (xs) | 767px (mobile) | 1023px (tablet) | 1279px (desktop)
+ */
+
+/* ── Typography scaling ─────────────────────────────────────────────────────── */
+
+@media (max-width: 767px) {
+  /* Scale down the large display headings used in hero sections */
+  h1 { font-size: var(--text-xl) !important; }
+
+  /* Reduce card padding on very small screens */
+  .card { padding: var(--sp-3); }
+
+  /* Full-width primary action buttons on mobile */
+  .btn-lg { height: 44px; }
+}
+
+@media (max-width: 479px) {
+  h1 { font-size: var(--text-lg) !important; }
+
+  /* Step label text — allow wrapping on very narrow screens */
+  .step-label-row span {
+    font-size: 9px;
+    letter-spacing: 0;
+  }
+}
+
+/* ── Form inputs ────────────────────────────────────────────────────────────── */
+
+@media (max-width: 767px) {
+  /* Ensure all inputs are full-width on mobile */
+  .input { width: 100% !important; }
+
+  /* Stack grid-2 and grid-3 grids vertically */
+  .grid-2,
+  .grid-3 { grid-template-columns: 1fr !important; }
+}
+
+/* ── Tables ─────────────────────────────────────────────────────────────────── */
+
+/*
+ * Wrapper for horizontally scrollable tables.
+ * Usage: wrap <table> in <div class="table-scroll">.
+ * The ::after pseudo-element creates a right-edge gradient hint.
+ * Note: the gradient wrapper must be OUTSIDE the overflow container.
+ */
+.table-scroll-wrapper {
+  position: relative;
+}
+
+.table-scroll-wrapper::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 32px;
+  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.9));
+  pointer-events: none;
+  /* Only show the hint when content is actually wider than the container.
+     We always render it; hiding it on wide screens is acceptable since it
+     fades to white (matches the card background). */
+}
+
+@media (min-width: 768px) {
+  /* Hide scroll hint on desktop — tables fit without scrolling */
+  .table-scroll-wrapper::after { display: none; }
+}
+
+/* ── Admin layout drawer animation ─────────────────────────────────────────── */
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+/* ── JobRequest — content padding when action bar is fixed at bottom ────────── */
+
+@media (max-width: 767px) {
+  .job-request-content {
+    /* Prevent content hiding behind the fixed action bar (~88px) */
+    padding-bottom: 88px;
+  }
+}
+
+/* ── Modals — additional body scroll lock hint ──────────────────────────────── */
+
+@media (max-width: 767px) {
+  /* Give modal body a bit more breathing room on small screens */
+  /* (bottom sheet — header handles top padding via Modal.module.css) */
+}
+
+/* ── Utility: responsive text ───────────────────────────────────────────────── */
+
+.text-truncate-mobile {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+@media (min-width: 768px) {
+  .text-truncate-mobile { overflow: visible; white-space: normal; }
+}

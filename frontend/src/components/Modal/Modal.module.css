@@ -79,3 +79,43 @@
   from { transform: translateY(12px); opacity: 0; }
   to   { transform: translateY(0);    opacity: 1; }
 }
+
+/* ── Mobile: bottom sheet ── */
+@media (max-width: 767px) {
+  .backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .panel {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    max-width: 100%;
+    max-height: 90vh;
+    /* Override panelIn with upward slide from bottom */
+    animation: mobileSlideUp 0.22s ease;
+  }
+
+  /* Drag handle hint */
+  .header::before {
+    content: '';
+    display: block;
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--color-gray-200);
+  }
+
+  .header {
+    position: relative;
+    padding-top: 20px;
+  }
+}
+
+@keyframes mobileSlideUp {
+  from { transform: translateY(100%); opacity: 0.6; }
+  to   { transform: translateY(0);    opacity: 1;   }
+}
