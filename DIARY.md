@@ -775,8 +775,67 @@ The spec called for flat pricing (driveway $45, walkway $20, steps $10, salting 
 - `npm run lint` — 0 errors, 0 warnings
 - `npm run build` — clean, 53 modules
 
-**Commit:** *(this commit)* — `feat: P0-15 mobile responsive polish`
+**Commit:** `feat: P0-15 mobile responsive polish`
 
 **Next task:** P0-16 — Stakeholder Review Materials
+
+---
+
+## P0-16 — Stakeholder Review Materials
+
+**Goal:** Produce two documents enabling structured stakeholder review of the Phase 0 prototype.
+
+### Files created
+
+**`docs/stakeholder-review-template.md`**
+
+A structured review form for external stakeholders (investors, advisors, potential users). Sections:
+
+| Section | Content |
+|---|---|
+| Reviewer Info | Name, role, date, device, browser |
+| Section 1 — First Impressions | 3 ratings (visual design, clarity, trust) |
+| Section 2 — Requester Flow | 4 ratings (posting ease, pricing clarity, tracking confidence, rating satisfaction) |
+| Section 3 — Worker Flow | 3 ratings (registration clarity, job request ease, earnings transparency) |
+| Section 4 — Admin Flow | 2 ratings (dashboard usefulness, dispute resolution clarity) |
+| Section 5 — Open Feedback | Missing features (5 lines), confusing elements (3 lines), positive highlights (3 lines) |
+| Section 6 — Priority Ranking | Top 3 improvements before public launch |
+| Section 7 — Overall Score | NPS 0–10 with reason; would-recommend Y/N/Maybe |
+
+Rating scale: 1–5 checkbox grid throughout.
+
+**`docs/prototype-demo-script.md`**
+
+A 25-minute presenter script for live or screen-share demos. Structure:
+
+| Part | Duration | Content |
+|---|---|---|
+| Setup | Pre-demo | Checklist (browser, Demo Mode panel, notifications, zoom to 125%), disclaimer text to read aloud |
+| Part 1 — Introduction | 2 min | Platform pitch, two user types, escrow model, 15% fee, Phase 0 scope |
+| Part 2 — Requester Flow | 8 min | Post Job wizard (3 min), Job Status + dev advance (2 min), Rate & Release (2 min) |
+| Part 3 — Worker Flow | 6 min | Registration wizard (2 min), Incoming Job Request + timer (2 min), Active Job + Earnings (2 min) |
+| Part 4 — Admin Flow | 4 min | Dashboard (1.5 min), Job Detail + Dispute Resolution (2.5 min) |
+| Part 5 — Q&A | 5 min | 5 structured prompts with listening-for notes |
+
+Script also includes:
+- Talking points for trust/safety, earnings transparency, mutual rating, worker dispatch logic, adjudication split slider
+- Deployment instructions (GitHub Pages current method + Firebase Hosting preview channel for Phase 1)
+- After-session triage process: P1 scope / Post-MVP / Rejected buckets, link to `DECISIONS_LOG.md`
+
+### Decision rationale
+
+These documents serve two separate audiences:
+- **Demo script** — for the presenter (human running the demo); includes timing, what to click, and what to say
+- **Review template** — for the reviewer (person watching); captures structured ratings and qualitative feedback
+
+Keeping them separate allows the template to be emailed to async reviewers who can't attend a live demo.
+
+### Verification
+- Both Markdown files render correctly (headers, tables, checkbox lists)
+- Prototype URL referenced: `https://perelgut.github.io/YoSnowMow/`
+
+**Commit:** `feat: P0-16 stakeholder review materials`
+
+**Phase 0 complete.** All 16 P0 tasks delivered. Next: Phase 1 — P1-01 Firebase Project Setup.
 
 ---
