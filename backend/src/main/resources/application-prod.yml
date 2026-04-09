@@ -1,4 +1,20 @@
-# Prod overrides — filled in P1-23
+# ============================================================
+# application-prod.yml — Production profile overrides
+# Active when SPRING_PROFILE=prod (set in Cloud Run env vars)
+#
+# All secrets injected by Cloud Run from GCP Secret Manager.
+# Server port stays at 8080 (Cloud Run default).
+# ============================================================
+
+yosnowmow:
+  firebase:
+    use-emulator: false             # Always use live Firebase in prod
+
+spring:
+  quartz:
+    job-store-type: memory          # Phase 1: in-memory is sufficient
+                                    # Phase 2: migrate to Cloud SQL JDBC store
+
 logging:
   level:
     com.yosnowmow: INFO

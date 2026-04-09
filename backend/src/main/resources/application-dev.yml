@@ -1,29 +1,28 @@
 # ============================================================
-# application-dev.yml — Spring Boot dev profile overrides
-# ============================================================
-# Sensitive values are injected via environment variables or
-# GCP Secret Manager — never hard-code credentials here.
+# application-dev.yml — Dev profile overrides
+# Active when SPRING_PROFILE=dev (the default)
 #
-# Firebase configuration (P1-01)
-#   FIREBASE_PROJECT_ID              — yosnowmow-dev
-#   FIREBASE_SERVICE_ACCOUNT_PATH    — path to service account JSON
-#                                      (download from Firebase Console
-#                                       → Project Settings → Service accounts)
-#                                      e.g. /secrets/yosnowmow-dev-sa.json
-#   FIREBASE_AUDIT_PROJECT_ID        — yosnowmow-audit
-#   FIREBASE_AUDIT_SERVICE_ACCOUNT_PATH — path to audit project service account
-#
-# These variables are consumed by FirebaseConfig.java (created in P1-04).
-# For local dev: set them in a .env file or your IDE run configuration.
-# For Cloud Run: inject via --set-env-vars or GCP Secret Manager (P1-02).
+# Key differences from prod:
+#   - Spring Boot runs on port 8081 (avoids conflict with
+#     Firestore emulator which also uses port 8080)
+#   - Firebase SDK points at local emulator (not live project)
+#   - Quartz uses in-memory store (no database needed)
+#   - Debug logging for app and security layers
 # ============================================================
 
-firebase:
-  project-id:              ${FIREBASE_PROJECT_ID:yosnowmow-dev}
-  service-account-path:    ${FIREBASE_SERVICE_ACCOUNT_PATH:}
-  audit-project-id:        ${FIREBASE_AUDIT_PROJECT_ID:yosnowmow-audit}
-  audit-service-account-path: ${FIREBASE_AUDIT_SERVICE_ACCOUNT_PATH:}
+server:
+  port: 8081
+
+yosnowmow:
+  firebase:
+    use-emulator:  true
+    emulator-host: localhost:8080   # Firestore emulator port (firebase.json)
+
+spring:
+  quartz:
+    job-store-type: memory          # H2 in-memory; no persistent job store in dev
 
 logging:
   level:
-    com.yosnowmow: DEBUG
+    com.yosnowmow:                  DEBUG
+    org.springframework.security:   DEBUG

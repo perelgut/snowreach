@@ -1,3 +1,8 @@
+# ============================================================
+# application.yml — Base configuration (all profiles inherit)
+# Profile-specific overrides in application-dev.yml / application-prod.yml
+# ============================================================
+
 spring:
   application:
     name: yosnowmow-api
@@ -7,8 +12,48 @@ spring:
 server:
   port: 8080
 
+# Actuator — expose health endpoint only (Cloud Run liveness/readiness probe)
 management:
   endpoints:
     web:
       exposure:
         include: health
+  endpoint:
+    health:
+      show-details: always
+
+# ── YoSnowMow application config ────────────────────────────
+# All sensitive values loaded from environment variables.
+# Dev defaults (after the colon) allow startup without secrets set.
+# Production Cloud Run injects real values from GCP Secret Manager.
+yosnowmow:
+
+  firebase:
+    project-id:           ${FIREBASE_PROJECT_ID:yosnowmow-dev}
+    service-account-path: ${FIREBASE_SERVICE_ACCOUNT_PATH:}
+    audit-project-id:     ${FIREBASE_AUDIT_PROJECT_ID:yosnowmow-audit}
+    use-emulator:         false        # overridden to true in application-dev.yml
+    emulator-host:        localhost:8080
+
+  cors:
+    # Comma-separated list of allowed origins.
+    # Override in profile YMLs or via CORS_ALLOWED_ORIGINS env var.
+    allowed-origins:
+      - http://localhost:5173
+      - http://localhost:5000
+      - https://yosnowmow-dev.web.app
+      - https://yosnowmow-dev.firebaseapp.com
+      - https://yosnowmow.com
+      - https://www.yosnowmow.com
+
+  stripe:
+    secret-key:      ${STRIPE_SECRET_KEY:placeholder-set-in-P1-11}
+    webhook-secret:  ${STRIPE_WEBHOOK_SECRET:placeholder-set-in-P1-11}
+
+  sendgrid:
+    api-key:    ${SENDGRID_API_KEY:placeholder-set-in-P1-17}
+    from-email: noreply@yosnowmow.com
+    from-name:  YoSnowMow
+
+  maps:
+    api-key: ${MAPS_API_KEY:placeholder-set-in-P1-07}

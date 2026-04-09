@@ -963,3 +963,75 @@ These are needed before the workflows will succeed (added as work progresses):
 **Commit:** `feat: P1-02 Dockerfile and CI/CD workflows for Cloud Run + Firebase Hosting`
 
 **Next task:** P1-03 — Spring Boot Skeleton
+
+---
+
+## P1-03 — Spring Boot Skeleton
+
+**Goal:** Create the Maven project file, configuration YAMLs, and foundational Java classes so the backend compiles and starts cleanly as a Spring Boot application.
+
+### Files created / updated
+
+**`backend/pom.xml`** (new):
+- Parent: `spring-boot-starter-parent 3.2.3`
+- groupId: `com.yosnowmow`, artifactId: `yosnowmow-api`
+- Java 21
+- Dependencies: spring-boot-starter-web, spring-boot-starter-security, spring-boot-starter-actuator, spring-boot-starter-quartz (includes quartz + spring-context-support), h2 (runtime), firebase-admin 9.3.0, stripe-java 25.3.0, sendgrid-java 4.10.1, google-maps-services 2.2.0, spring-boot-starter-test, spring-security-test
+- Excluded `grpc-netty-shaded` from firebase-admin (conflicts with Spring Boot HTTP client)
+- Used `spring-boot-starter-quartz` instead of bare `quartz` + `spring-context-support` — the starter is the idiomatic Spring Boot approach and handles version management via the parent BOM
+
+**`backend/src/main/resources/application.yml`** (updated):
+- `yosnowmow:` config namespace (spec used `snowreach:` — updated to match rename)
+- All sensitive values loaded via `${ENV_VAR:dev-default}` — app starts in dev without any secrets set
+- CORS allowed-origins list includes localhost:5173 (Vite dev), localhost:5000 (Firebase emulator hosting), yosnowmow-dev.web.app, yosnowmow-dev.firebaseapp.com, yosnowmow.com
+- sendgrid.from-email: `noreply@yosnowmow.com`, from-name: `YoSnowMow`
+
+**`backend/src/main/resources/application-dev.yml`** (updated):
+- `server.port: 8081` — avoids port conflict with Firestore emulator (also 8080)
+- `yosnowmow.firebase.use-emulator: true`
+- `spring.quartz.job-store-type: memory`
+- DEBUG logging for `com.yosnowmow` and `org.springframework.security`
+
+**`backend/src/main/resources/application-prod.yml`** (updated):
+- `server.port` stays at 8080 (Cloud Run default)
+- `use-emulator: false`
+- INFO logging
+
+**`backend/src/main/java/com/yosnowmow/exception/JobNotFoundException.java`** (implemented):
+- Extends `RuntimeException`; stores `jobId` field; message: `"Job not found: {jobId}"`
+
+**`backend/src/main/java/com/yosnowmow/exception/InvalidTransitionException.java`** (implemented):
+- Extends `RuntimeException`; single String message constructor
+
+**`backend/src/main/java/com/yosnowmow/exception/PaymentException.java`** (implemented):
+- Extends `RuntimeException`; two constructors: `(String message)` and `(String message, Throwable cause)`
+
+**`backend/src/main/java/com/yosnowmow/exception/GlobalExceptionHandler.java`** (implemented):
+- `@RestControllerAdvice` with RFC 7807 Problem JSON responses
+- Handlers: `JobNotFoundException` → 404, `InvalidTransitionException` → 409, `PaymentException` → 402, `MethodArgumentNotValidException` → 400 with field errors list, `AccessDeniedException` → 403, `Exception` → 500 (stack trace logged, never in response)
+- `problemBody()` helper builds consistent `LinkedHashMap` with type/title/status/detail/instance/timestamp
+
+**`backend/src/main/java/com/yosnowmow/config/CorsConfig.java`** (implemented):
+- `@Configuration` with `CorsFilter` bean
+- Allowed origins loaded from `yosnowmow.cors.allowed-origins` via inner `@ConfigurationProperties` class
+- Allows methods: GET/POST/PUT/PATCH/DELETE/OPTIONS
+- Allows headers: Authorization, Content-Type, Accept
+- `allowCredentials: true` (needed for Firebase ID token in Authorization header)
+- Preflight cache: 3600 seconds
+
+### Decisions vs. spec
+
+| Spec | Change | Reason |
+|---|---|---|
+| `quartz 2.3.2` + `spring-context-support` separately | `spring-boot-starter-quartz` | Idiomatic Spring Boot; starter manages version via parent BOM |
+| `server.port: 8080` in dev | `server.port: 8081` in dev | Firestore emulator also uses 8080; two processes cannot share a port |
+| `snowreach:` config namespace | `yosnowmow:` | Consistent with project rename |
+| `noreply@snowreach.ca` | `noreply@yosnowmow.com` | Correct domain |
+
+### Verification
+- `mvn validate` — BUILD SUCCESS
+- `mvn dependency:go-offline -B` — all dependencies resolved, BUILD SUCCESS, no version conflicts
+
+**Commit:** `feat: P1-03 Spring Boot skeleton — pom.xml, config YAMLs, exceptions, CORS`
+
+**Next task:** P1-04 — Firebase Auth Integration and RBAC
