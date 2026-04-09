@@ -1,1 +1,71 @@
-# Backend CI/CD — configured in P1-02
+# ============================================================
+# backend-deploy.yml — Build and deploy the Spring Boot backend
+# to Google Cloud Run on every push to main that touches backend/
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   GOOGLE_CLOUD_SERVICE_ACCOUNT  — GCP service account JSON with roles:
+#                                    Cloud Run Admin, Cloud Build Editor,
+#                                    Storage Admin, Service Account User
+#   GOOGLE_CLOUD_PROJECT          — GCP project ID (e.g. yosnowmow-dev)
+#
+# These secrets are injected into Cloud Run via GCP Secret Manager
+# (not as plain env vars) — set them up in Secret Manager first:
+#   FIREBASE_PROJECT_ID, FIREBASE_SERVICE_ACCOUNT_PATH,
+#   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
+#   SENDGRID_API_KEY, MAPS_API_KEY
+# ============================================================
+
+name: Backend Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/**
+
+jobs:
+  deploy:
+    name: Build → Push → Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # Authenticate to Google Cloud using the service account JSON secret
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GOOGLE_CLOUD_SERVICE_ACCOUNT }}
+
+      # Install and configure gcloud CLI
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Build the Docker image via Cloud Build and push to Container Registry.
+      # Using Cloud Build (not local docker build) avoids needing Docker on the runner
+      # and keeps build logs in GCP for auditability.
+      - name: Build and push Docker image
+        run: |
+          gcloud builds submit backend/ \
+            --tag gcr.io/${{ secrets.GOOGLE_CLOUD_PROJECT }}/yosnowmow-api:${{ github.sha }}
+
+      # Deploy the new image to Cloud Run.
+      # Secrets are pulled from GCP Secret Manager at runtime — never stored in
+      # Cloud Run env vars or in this workflow file.
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy yosnowmow-api \
+            --image gcr.io/${{ secrets.GOOGLE_CLOUD_PROJECT }}/yosnowmow-api:${{ github.sha }} \
+            --region northamerica-northeast2 \
+            --platform managed \
+            --min-instances 1 \
+            --max-instances 10 \
+            --memory 512Mi \
+            --set-secrets FIREBASE_PROJECT_ID=FIREBASE_PROJECT_ID:latest \
+            --set-secrets FIREBASE_SERVICE_ACCOUNT_PATH=FIREBASE_SERVICE_ACCOUNT_PATH:latest \
+            --set-secrets STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest \
+            --set-secrets STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest \
+            --set-secrets SENDGRID_API_KEY=SENDGRID_API_KEY:latest \
+            --set-secrets MAPS_API_KEY=MAPS_API_KEY:latest \
+            --allow-unauthenticated

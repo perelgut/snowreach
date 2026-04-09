@@ -1,0 +1,78 @@
+# ============================================================
+# frontend-deploy.yml — Build the React app and deploy to
+# Firebase Hosting on every push to main that touches frontend/
+#
+# This workflow replaces the GitHub Pages deploy (deploy.yml)
+# once Phase 1 Firebase Hosting is live. Both can coexist
+# during the transition period.
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   FIREBASE_SERVICE_ACCOUNT      — Firebase service account JSON
+#                                    (already set in P1-01)
+#
+# These secrets provide the VITE_ build-time config values
+# (Firebase web app config for the prod project):
+#   VITE_FIREBASE_API_KEY
+#   VITE_FIREBASE_AUTH_DOMAIN
+#   VITE_FIREBASE_PROJECT_ID
+#   VITE_FIREBASE_STORAGE_BUCKET
+#   VITE_FIREBASE_MESSAGING_SENDER_ID
+#   VITE_FIREBASE_APP_ID
+#   VITE_API_BASE_URL             — Cloud Run backend URL (set in P1-02)
+# ============================================================
+
+name: Frontend Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - frontend/**
+
+jobs:
+  deploy:
+    name: Build → Deploy to Firebase Hosting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      # Build the Vite app. VITE_ variables are injected here from
+      # GitHub Secrets — they are baked into the static bundle at build
+      # time and are safe to expose in the browser (Firebase web config
+      # is not secret; security is enforced by Firestore rules + Auth).
+      - name: Build
+        run: npm run build
+        working-directory: frontend
+        env:
+          VITE_FIREBASE_API_KEY:            ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN:        ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID:         ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET:     ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID:             ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_API_BASE_URL:                ${{ secrets.VITE_API_BASE_URL }}
+          VITE_USE_EMULATORS:               "false"
+
+      # Deploy the built dist/ folder to Firebase Hosting.
+      # Uses the official Firebase action which handles auth via the
+      # service account JSON set in P1-01.
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken:       ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          channelId:       live
+          projectId:       ${{ secrets.VITE_FIREBASE_PROJECT_ID }}

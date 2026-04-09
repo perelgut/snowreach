@@ -899,3 +899,67 @@ The following require a browser + Google account and cannot be automated:
 **Next task:** P1-02 — GCP + Cloud Run + CI/CD
 
 ---
+
+## P1-02 — GCP + Cloud Run + CI/CD
+
+**Goal:** Create the Docker build pipeline and GitHub Actions CI/CD workflows so every push to `main` automatically builds and deploys the backend to Cloud Run and the frontend to Firebase Hosting.
+
+### Files created
+
+**`backend/Dockerfile`** (multi-stage):
+- Stage 1 (`builder`): `maven:3.9-eclipse-temurin-21` — copies `pom.xml` first for dependency layer caching, then copies `src/` and runs `mvn package -DskipTests -B`
+- Stage 2 (`runtime`): `eclipse-temurin:21-jre-jammy` — copies only the built JAR, exposes port 8080
+- Result: slim production image with no Maven, no source code, no intermediate artifacts
+
+**`.github/workflows/backend-deploy.yml`** (replaced TODO stub):
+- Triggers on push to `main` where `backend/**` files changed
+- Steps: checkout → GCP auth (service account JSON) → gcloud CLI setup → `gcloud builds submit` (Cloud Build, not local Docker) → `gcloud run deploy`
+- Cloud Run config: `northamerica-northeast2`, min 1 instance, max 10, 512Mi memory
+- All runtime secrets (`FIREBASE_PROJECT_ID`, `STRIPE_SECRET_KEY`, etc.) injected from GCP Secret Manager via `--set-secrets`, never stored as plain env vars
+
+**`.github/workflows/frontend-deploy.yml`** (new):
+- Triggers on push to `main` where `frontend/**` files changed
+- Steps: checkout → Node 20 setup (npm cache) → `npm ci` → `npm run build` → Firebase Hosting deploy
+- `VITE_` vars injected at build time from GitHub Secrets (safe — Firebase web config is public by design; security is in Firestore rules + Auth)
+- `VITE_USE_EMULATORS=false` hardcoded for CI (never point prod build at emulators)
+- Uses `FirebaseExtended/action-hosting-deploy@v0` (official Firebase action) — authenticates via `FIREBASE_SERVICE_ACCOUNT` secret set up in P1-01; no separate `FIREBASE_TOKEN` needed
+
+### Decisions vs. spec
+
+| Spec | Change | Reason |
+|---|---|---|
+| `northamerica-northeast1` | `northamerica-northeast2` (Toronto) | Matches Firebase region chosen in P1-01 manual setup |
+| `w9jds/firebase-action@master` | `FirebaseExtended/action-hosting-deploy@v0` | Official action; uses service account already set up; `w9jds` action is unmaintained |
+
+### GitHub Secrets still to add
+
+These are needed before the workflows will succeed (added as work progresses):
+
+| Secret | Added in | Value source |
+|---|---|---|
+| `GOOGLE_CLOUD_SERVICE_ACCOUNT` | P1-02 manual | GCP Console → IAM → Service Accounts |
+| `GOOGLE_CLOUD_PROJECT` | P1-02 manual | GCP project ID |
+| `VITE_FIREBASE_API_KEY` | P1-02 manual | Firebase Console → Project Settings → Web App |
+| `VITE_FIREBASE_AUTH_DOMAIN` | P1-02 manual | same |
+| `VITE_FIREBASE_PROJECT_ID` | P1-02 manual | same |
+| `VITE_FIREBASE_STORAGE_BUCKET` | P1-02 manual | same |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | P1-02 manual | same |
+| `VITE_FIREBASE_APP_ID` | P1-02 manual | same |
+| `VITE_API_BASE_URL` | P1-02 manual | Cloud Run service URL (after first deploy) |
+| `STRIPE_SECRET_KEY` | P1-11 | Stripe Dashboard |
+| `STRIPE_WEBHOOK_SECRET` | P1-11 | Stripe Dashboard |
+| `SENDGRID_API_KEY` | P1-17 | SendGrid Dashboard |
+| `MAPS_API_KEY` | P1-07 | GCP Console → APIs & Services |
+
+### What was NOT done (manual steps required)
+
+1. Create GCP project (or confirm Firebase project doubles as GCP project)
+2. Enable Cloud Run API, Cloud Build API, Container Registry API
+3. Create a GCP service account with required roles, download JSON → add as `GOOGLE_CLOUD_SERVICE_ACCOUNT` GitHub Secret
+4. Add `GOOGLE_CLOUD_PROJECT` GitHub Secret
+5. Add all `VITE_FIREBASE_*` GitHub Secrets (prod values from Firebase Console)
+6. GCP Secret Manager: create secret entries for `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_PATH`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `SENDGRID_API_KEY`, `MAPS_API_KEY`
+
+**Commit:** `feat: P1-02 Dockerfile and CI/CD workflows for Cloud Run + Firebase Hosting`
+
+**Next task:** P1-03 — Spring Boot Skeleton
