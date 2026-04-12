@@ -1138,3 +1138,45 @@ P1-04 established token verification and RBAC. P1-05 wires the first real busine
 **Commit:** `feat: P1-05 User registration and profile API`
 
 **Next task:** P1-06 — Worker profile API (equipment, service area, availability schedule)
+
+---
+
+## 2026-04-12 — P1-06: Worker Profile API
+
+### Context
+P1-05 gave us user registration. P1-06 lets a registered user activate the Worker role and configure their service profile. This is a prerequisite for the matching algorithm (P1-09) and dispatch (P1-10).
+
+### Spec vs. Implementation Plan discrepancy
+The IMPLEMENTATION_PLAN.md (drafted before the spec was finalized) described a separate `workers/{uid}` Firestore collection. The authoritative SPECIFICATION.md §3.1 embeds the worker data as a `worker` sub-object within `users/{uid}`. This implementation follows the spec. The tradeoff: slightly larger user document, but queries for worker matching (`status = "available"`, radius, etc.) work fine against the users collection with Firestore indexes.
+
+### Files created / modified
+
+| File | Change |
+|---|---|
+| `model/Address.java` | New: embedded address type used in WorkerProfile.baseAddress and later in Job.propertyAddress. |
+| `model/PricingTier.java` | New: single distance-based pricing tier (maxDistanceKm, priceCAD). |
+| `model/WorkerProfile.java` | New: the `worker` sub-object from spec §3.1. All Phase 1 fields; Phase 2/3 fields stubbed with comments so schema stays stable. |
+| `model/User.java` | Added `worker: WorkerProfile` field with getter/setter. |
+| `dto/WorkerProfileRequest.java` | Updated: full implementation for POST/PATCH. Includes nested TierDto. |
+| `service/WorkerService.java` | Updated: activateWorker(), updateWorkerProfile(), adjustActiveJobCount() (called by JobService), getWorkerUser(). |
+| `controller/WorkerController.java` | Updated: POST /api/users/me/worker, PATCH /api/users/me/worker, PATCH /api/users/{userId}/worker (admin). |
+
+### Design decisions
+
+| Decision | Reason |
+|---|---|
+| Worker data embedded in users/{uid}, not separate collection | Spec §3.1 is authoritative. Single document per user is simpler; no cross-collection joins needed to get a user+worker view. |
+| baseCoords left null until P1-07 | GeocodingService is next task. Matching algorithm (P1-09) explicitly handles null baseCoords by skipping that worker. |
+| POST /me/worker → 409 if already activated | Activation is idempotent-safe for retries; subsequent changes go through PATCH. |
+| `adjustActiveJobCount()` uses a Firestore transaction | Prevents race condition where two job state transitions fire concurrently and corrupt the count. |
+| Workers cannot self-set status="busy" | "busy" is reserved for the dispatch system to prevent fake unavailability. Only "available"/"unavailable" are self-settable. |
+| Referral code generated at activation, not at user registration | Not all users become Workers; generating it lazily avoids wasting codes. |
+| Admin PATCH at /{userId}/worker (not /me/worker) | Keeps the "me" endpoints strictly for self-service; admin path is explicit and auditable. |
+
+### Verification
+- `mvn compile -q` — BUILD SUCCESS, 0 errors
+- `mvn test -q` — all existing tests pass
+
+**Commit:** `feat: P1-06 Worker profile API`
+
+**Next task:** P1-07 — Geocoding service (Google Maps server-side → FSA centroid fallback)

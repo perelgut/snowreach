@@ -76,6 +76,15 @@ public class User {
 
     private Timestamp updatedAt;
 
+    // ── Role sub-objects ──────────────────────────────────────────────────────
+
+    /**
+     * Worker-specific profile data.
+     * Present only when this user holds the "worker" role.
+     * Populated and updated exclusively by WorkerService.
+     */
+    private WorkerProfile worker;
+
     // ── Constructors ─────────────────────────────────────────────────────────
 
     /** Required by Firestore deserialisation. */
@@ -133,4 +142,7 @@ public class User {
 
     public Timestamp getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Timestamp updatedAt) { this.updatedAt = updatedAt; }
+
+    public WorkerProfile getWorker() { return worker; }
+    public void setWorker(WorkerProfile worker) { this.worker = worker; }
 }
