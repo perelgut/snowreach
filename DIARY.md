@@ -1099,3 +1099,42 @@ These are needed before the workflows will succeed (added as work progresses):
 **Commit:** `feat: P1-04 Firebase Auth token verification and RBAC`
 
 **Next task:** P1-05 — User Registration and Profile API
+
+---
+
+## 2026-04-12 — P1-05: User Registration and Profile API
+
+### Context
+P1-04 established token verification and RBAC. P1-05 wires the first real business endpoint: user registration. This is the gateway to all subsequent features — no job can be posted until a user profile exists.
+
+### Files created / modified
+
+| File | Change |
+|---|---|
+| `model/User.java` | POJO mapping to `users/{uid}` Firestore document per spec §3.1. Phase 1 core fields only (uid, email, name, dob, tos, privacy, roles, phone, accountStatus, timestamps). Worker/requester sub-objects deferred to P1-06 and payment tasks. |
+| `dto/CreateUserRequest.java` | POST /api/users body. Bean Validation on required fields. Roles limited to self-assignable set — "admin" cannot be self-assigned. |
+| `dto/UpdateUserRequest.java` | PATCH /api/users/{id} body. All fields optional; only non-null values applied. |
+| `exception/UserNotFoundException.java` | Thrown when Firestore document missing for a UID. Mapped to HTTP 404 by GlobalExceptionHandler. |
+| `exception/GlobalExceptionHandler.java` | Added handler for UserNotFoundException → 404. |
+| `service/UserService.java` | Core business logic: (1) age check (18+); (2) validate self-assignable roles; (3) idempotency guard (409 if doc exists); (4) write to Firestore; (5) mirror roles to Firebase custom claims via `FirebaseAuth.setCustomUserClaims()`. |
+| `controller/UserController.java` | POST /api/users (register), GET /api/users/{id}, PATCH /api/users/{id}. Inline self-or-admin guard rather than @RequiresRole — explicit and auditable. |
+| `pom.xml` | Added `spring-boot-starter-validation` (Bean Validation — @Valid, @NotBlank, etc. were missing). |
+
+### Design decisions
+
+| Decision | Reason |
+|---|---|
+| UID from token, not request body | Prevents impersonation — the caller can only register under their own Firebase UID |
+| 409 Conflict on duplicate registration | Allows safe client retries (network failures) without creating duplicate documents |
+| `setCustomUserClaims()` non-fatal | Custom claim propagation lag is up to 1 hour (next token refresh); the filter already has a graceful empty-roles fallback. A claim write failure should not block registration. |
+| Inline `requireSelfOrAdmin` helper | Pattern is explicit in the controller rather than relying on @RequiresRole which hides the conditional — easier for junior devs to audit |
+| PATCH ignores null fields | Standard REST partial-update semantics; avoids accidentally clearing optional fields the client doesn't send |
+| Age validation server-side | Client-side DOB gating is trivially bypassed; the server is the authority |
+
+### Verification
+- `mvn compile -q` — BUILD SUCCESS, 0 errors
+- `mvn test -q` — all existing tests pass (StateMachineTest, JobServiceTest, MatchingServiceTest)
+
+**Commit:** `feat: P1-05 User registration and profile API`
+
+**Next task:** P1-06 — Worker profile API (equipment, service area, availability schedule)

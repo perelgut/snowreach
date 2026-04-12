@@ -42,6 +42,16 @@ public class GlobalExceptionHandler {
                 request.getRequestURI());
     }
 
+    @ExceptionHandler(UserNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleUserNotFound(
+            UserNotFoundException ex, HttpServletRequest request) {
+
+        return problem(HttpStatus.NOT_FOUND,
+                "User Not Found",
+                ex.getMessage(),
+                request.getRequestURI());
+    }
+
     // ── 409 Conflict ───────────────────────────────────────────────────────
 
     @ExceptionHandler(InvalidTransitionException.class)

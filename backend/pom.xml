@@ -50,6 +50,12 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- ── Bean Validation (@Valid, @NotBlank, etc.) ─────────── -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
         <!-- ── Quartz Scheduler ──────────────────────────────────
              spring-boot-starter-quartz includes quartz 2.3.x and
              spring-context-support; version managed by Boot parent. -->
