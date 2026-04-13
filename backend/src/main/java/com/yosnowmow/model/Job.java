@@ -187,6 +187,13 @@ public class Job {
     private Timestamp offerExpiry;
 
     /**
+     * Ordered list of Worker UIDs produced by MatchingService (P1-09).
+     * Workers are ranked: rating DESC, distance ASC.  Max 20 entries.
+     * Empty until matching completes (async after job creation).
+     */
+    private List<String> matchedWorkerIds;
+
+    /**
      * Worker UIDs explicitly selected by the Requester at posting time.
      * When non-empty, only these Workers receive offers (bypassing the matching algorithm).
      */
@@ -361,6 +368,9 @@ public class Job {
 
     public int getCannotCompleteCountThisJob() { return cannotCompleteCountThisJob; }
     public void setCannotCompleteCountThisJob(int cannotCompleteCountThisJob) { this.cannotCompleteCountThisJob = cannotCompleteCountThisJob; }
+
+    public List<String> getMatchedWorkerIds() { return matchedWorkerIds; }
+    public void setMatchedWorkerIds(List<String> matchedWorkerIds) { this.matchedWorkerIds = matchedWorkerIds; }
 
     public List<String> getSelectedWorkerIds() { return selectedWorkerIds; }
     public void setSelectedWorkerIds(List<String> selectedWorkerIds) { this.selectedWorkerIds = selectedWorkerIds; }

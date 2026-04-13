@@ -5,6 +5,7 @@ import com.yosnowmow.model.Job;
 import com.yosnowmow.security.AuthenticatedUser;
 import com.yosnowmow.security.RequiresRole;
 import com.yosnowmow.service.JobService;
+import com.yosnowmow.service.MatchingService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -37,9 +38,11 @@ import java.util.List;
 public class JobController {
 
     private final JobService jobService;
+    private final MatchingService matchingService;
 
-    public JobController(JobService jobService) {
+    public JobController(JobService jobService, MatchingService matchingService) {
         this.jobService = jobService;
+        this.matchingService = matchingService;
     }
 
     /**
@@ -59,6 +62,12 @@ public class JobController {
             @Valid @RequestBody CreateJobRequest req) {
 
         Job created = jobService.createJob(caller, req);
+
+        // Kick off Worker matching asynchronously — returns immediately so the
+        // HTTP response is not blocked.  MatchingService will populate
+        // matchedWorkerIds on the job document and then trigger DispatchService.
+        matchingService.matchAndStoreWorkers(created.getJobId());
+
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
 
