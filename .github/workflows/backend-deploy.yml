@@ -81,8 +81,13 @@ jobs:
         run: docker push ${{ env.IMAGE }}:${{ github.sha }}
 
       # Deploy the new image to Cloud Run.
-      # Secrets are pulled from GCP Secret Manager at runtime — never stored in
-      # Cloud Run env vars or in this workflow file.
+      # Runtime secrets are injected from GCP Secret Manager as environment variables.
+      #
+      # FIREBASE_SERVICE_ACCOUNT_PATH is intentionally omitted: FirebaseConfig falls
+      # back to Application Default Credentials (ADC) when the path env var is absent,
+      # and Cloud Run automatically provides ADC via the revision's service account
+      # identity.  Injecting a file path that doesn't exist in the container causes a
+      # FileNotFoundException on startup.
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy yosnowmow-api \
@@ -93,7 +98,6 @@ jobs:
             --max-instances 10 \
             --memory 512Mi \
             --set-secrets FIREBASE_PROJECT_ID=FIREBASE_PROJECT_ID:latest \
-            --set-secrets FIREBASE_SERVICE_ACCOUNT_PATH=FIREBASE_SERVICE_ACCOUNT_PATH:latest \
             --set-secrets STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest \
             --set-secrets STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest \
             --set-secrets SENDGRID_API_KEY=SENDGRID_API_KEY:latest \
