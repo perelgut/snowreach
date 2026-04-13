@@ -49,4 +49,15 @@ public class NotificationService {
         log.debug("TODO P1-18 — notifyRequesterJobAccepted: requester={} job={} worker={}",
                 requesterId, jobId, workerId);
     }
+
+    /**
+     * Notifies a Requester that their payment attempt failed.
+     * TODO P1-17: wire to SendGrid transactional email.
+     *
+     * @param requesterId Firebase UID of the Requester
+     * @param jobId       job document ID
+     */
+    public void notifyPaymentFailed(String requesterId, String jobId) {
+        log.debug("TODO P1-17 — notifyPaymentFailed: requester={} job={}", requesterId, jobId);
+    }
 }

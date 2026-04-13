@@ -112,6 +112,9 @@ public class Job {
      */
     private String stripePaymentIntentClientSecret;
 
+    /** Stripe Transfer ID created when the Worker is paid out at RELEASED state. */
+    private String stripeTransferId;
+
     private Timestamp escrowDepositedAt;
 
     /** 30 minutes after Worker acceptance — deposit must arrive by this time. */
@@ -278,6 +281,9 @@ public class Job {
 
     public String getStripePaymentIntentClientSecret() { return stripePaymentIntentClientSecret; }
     public void setStripePaymentIntentClientSecret(String s) { this.stripePaymentIntentClientSecret = s; }
+
+    public String getStripeTransferId() { return stripeTransferId; }
+    public void setStripeTransferId(String stripeTransferId) { this.stripeTransferId = stripeTransferId; }
 
     public Timestamp getEscrowDepositedAt() { return escrowDepositedAt; }
     public void setEscrowDepositedAt(Timestamp escrowDepositedAt) { this.escrowDepositedAt = escrowDepositedAt; }

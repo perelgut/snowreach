@@ -263,6 +263,43 @@ public class JobService {
         }
     }
 
+    /**
+     * Transitions a job to a new status and records an audit entry.
+     *
+     * This is a low-level write — it does NOT validate that the transition is
+     * allowed.  Full transition-table validation is added in P1-13.  All callers
+     * inside the backend are trusted (PaymentService, WebhookController, etc.).
+     *
+     * @param jobId        Firestore document ID
+     * @param newStatus    target status string (e.g. "CONFIRMED", "RELEASED")
+     * @param actorUid     UID of the actor causing the transition (or "stripe"/"system")
+     * @param extraUpdates additional Firestore field updates to apply atomically,
+     *                     or {@code null} for none
+     */
+    public void transitionStatus(String jobId,
+                                 String newStatus,
+                                 String actorUid,
+                                 java.util.Map<String, Object> extraUpdates) {
+        try {
+            Job before = getJob(jobId);
+            auditLogService.write(actorUid, "STATUS_" + newStatus, "job", jobId, before, newStatus);
+
+            java.util.Map<String, Object> updates = new java.util.HashMap<>();
+            if (extraUpdates != null) updates.putAll(extraUpdates);
+            updates.put("status",    newStatus);
+            updates.put("updatedAt", Timestamp.now());
+
+            firestore.collection(JOBS_COLLECTION).document(jobId).update(updates).get();
+            log.info("Job {} transitioned to {} by {}", jobId, newStatus, actorUid);
+
+        } catch (InterruptedException | ExecutionException e) {
+            Thread.currentThread().interrupt();
+            log.error("Failed to transition job {} to {}: {}", jobId, newStatus, e.getMessage(), e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to update job status");
+        }
+    }
+
     // ── Package-private — used by other services ──────────────────────────────
 
     /**
