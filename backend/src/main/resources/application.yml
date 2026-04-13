@@ -32,6 +32,7 @@ yosnowmow:
     project-id:           ${FIREBASE_PROJECT_ID:yosnowmow-dev}
     service-account-path: ${FIREBASE_SERVICE_ACCOUNT_PATH:}
     audit-project-id:     ${FIREBASE_AUDIT_PROJECT_ID:yosnowmow-audit}
+    storage-bucket:       ${FIREBASE_STORAGE_BUCKET:yosnowmow-dev.appspot.com}
     use-emulator:         false        # overridden to true in application-dev.yml
     emulator-host:        localhost:8080
 

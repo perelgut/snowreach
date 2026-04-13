@@ -1,6 +1,7 @@
 package com.yosnowmow.scheduler;
 
 import com.yosnowmow.service.JobService;
+import com.yosnowmow.service.PaymentService;
 import org.quartz.DisallowConcurrentExecution;
 import org.quartz.Job;
 import org.quartz.JobDataMap;
@@ -34,6 +35,9 @@ public class DisputeTimerJob implements Job {
     @Autowired
     private JobService jobService;
 
+    @Autowired
+    private PaymentService paymentService;
+
     @Override
     public void execute(JobExecutionContext context) throws JobExecutionException {
         JobDataMap data = context.getMergedJobDataMap();
@@ -49,8 +53,9 @@ public class DisputeTimerJob implements Job {
                 return;
             }
 
-            // Auto-release: transition to RELEASED as the system actor.
+            // Auto-release: transition to RELEASED and trigger the Stripe payout.
             jobService.transition(jobId, "RELEASED", "system", false);
+            paymentService.releasePayment(jobId);
             log.info("Job {} auto-released after 4-hour timer", jobId);
 
         } catch (Exception e) {
