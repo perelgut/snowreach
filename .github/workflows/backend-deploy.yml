@@ -20,9 +20,12 @@
 #   GOOGLE_CLOUD_PROJECT          — GCP project ID (e.g. yosnowmow-dev-a1b2c)
 #
 # Runtime secrets injected from GCP Secret Manager (set up manually in P1-02):
-#   FIREBASE_PROJECT_ID, FIREBASE_SERVICE_ACCOUNT_PATH,
-#   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
-#   SENDGRID_API_KEY, MAPS_API_KEY
+#   FIREBASE_PROJECT_ID           — Firebase project ID
+#   FIREBASE_STORAGE_BUCKET       — Firebase Storage bucket name (e.g. yosnowmow-prod.appspot.com)
+#   STRIPE_SECRET_KEY             — Stripe secret key (sk_live_...)
+#   STRIPE_WEBHOOK_SECRET         — Stripe webhook signing secret (whsec_...)
+#   SENDGRID_API_KEY              — SendGrid API key (wired in P1-17)
+#   MAPS_API_KEY                  — Google Maps Geocoding API key
 # ============================================================
 
 name: Backend Deploy
@@ -99,6 +102,7 @@ jobs:
             --memory 512Mi \
             --set-env-vars SPRING_PROFILE=prod \
             --set-secrets FIREBASE_PROJECT_ID=FIREBASE_PROJECT_ID:latest \
+            --set-secrets FIREBASE_STORAGE_BUCKET=FIREBASE_STORAGE_BUCKET:latest \
             --set-secrets STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest \
             --set-secrets STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest \
             --set-secrets SENDGRID_API_KEY=SENDGRID_API_KEY:latest \
