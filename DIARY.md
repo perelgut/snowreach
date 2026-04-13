@@ -1252,8 +1252,6 @@ P1-07 gave us geocoding. P1-08 uses it: the Requester posts a job, the address i
 
 **Commit:** `feat: P1-08 Job posting API`
 
-**Next task:** P1-09 — Worker matching algorithm (filter by service area, rank by rating then distance)
-
 ---
 
 ## 2026-04-13 — CI/CD Debug: Backend Deploy Workflow (6 successive fixes)
@@ -1308,3 +1306,48 @@ Run #14 — **SUCCESS**. The backend API is live on Cloud Run (`northamerica-nor
 5. ADC is the correct credential strategy for Cloud Run — no service account JSON file needed or wanted.
 
 **Next task:** P1-09 — Worker matching algorithm (filter by service area, rank by rating then distance)
+
+---
+
+## 2026-04-13 — P1-09 + P1-10: Worker Matching and Sequential Dispatch
+
+### Context
+With jobs now being posted (P1-08), the platform needs to find eligible Workers and present them offers one at a time with a 10-minute response window. P1-09 implements the candidate selection algorithm; P1-10 implements the dispatch loop and Quartz timer.
+
+### Files created / modified
+
+| File | Change |
+|---|---|
+| `model/Job.java` | Added `matchedWorkerIds` field (List&lt;String&gt;) — ordered candidate list produced by MatchingService. |
+| `YoSnowMowApplication.java` | Added `@EnableAsync` — required for `@Async` in MatchingService. |
+| `service/MatchingService.java` | Full P1-09 implementation. @Async method `matchAndStoreWorkers(jobId)`. Filters on worker.status=="available" via Firestore dot-notation, then in-Java: non-null baseCoords, activeJobCount < capacityMax, within radius (+10% buffer), personalWorkerOnly. Sort rating DESC/distance ASC, max 20 candidates. selectedWorkerIds bypass. |
+| `service/DispatchService.java` | Full P1-10 implementation. `dispatchToNextWorker`: picks next untried Worker, writes jobRequests doc, calls NotificationService stub, schedules 10-min Quartz timer. `handleWorkerResponse`: accept computes all pricing fields and transitions to PENDING_DEPOSIT; decline tries next. `handleOfferExpiry`: marks EXPIRED, dispatches next. `recoverPendingDispatches`: @EventListener(ContextRefreshedEvent) re-queues timers after restart; AtomicBoolean guard prevents double-run. No-workers path transitions job to CANCELLED. |
+| `scheduler/DispatchJob.java` | Quartz job. `@DisallowConcurrentExecution`. `@Autowired DispatchService` works via Spring Boot's auto-configured SpringBeanJobFactory. |
+| `config/QuartzConfig.java` | Placeholder `@Configuration` class — all Quartz wiring handled by YAML + auto-config. Phase 2 note: migrate to JDBC job store. |
+| `service/NotificationService.java` | Stub with real signatures: `sendJobRequest`, `notifyRequesterNoWorkers`, `notifyRequesterJobAccepted`. Wired in P1-17/P1-18. |
+| `model/JobRequest.java` | New model for `jobRequests/{jobId}_{workerId}` Firestore collection. Fields: jobRequestId, jobId, workerId, status (PENDING/ACCEPTED/DECLINED/EXPIRED), sentAt, expiresAt, respondedAt. |
+| `dto/RespondToJobRequestDto.java` | `{accepted: boolean}` request body. |
+| `controller/JobRequestController.java` | `POST /api/job-requests/{requestId}/respond` (WORKER role). |
+| `controller/JobController.java` | Injected MatchingService; calls `matchingService.matchAndStoreWorkers(jobId)` after job creation. |
+
+### Design decisions
+
+| Decision | Reason |
+|---|---|
+| MatchingService @Async | Matching queries all available workers from Firestore and may be slow. POST /api/jobs must return 201 immediately. |
+| Firestore dot-notation query (`worker.status == "available"`) | Avoids pulling all user documents into Java for filtering. Phase 2 can add GeoHash-based geo-queries for scale. |
+| selectedWorkerIds bypass | Requester who already knows a trusted Worker can skip random matching entirely. |
+| Worker accept → PENDING_DEPOSIT (not CONFIRMED) | Per spec state machine: deposit must arrive before the job is CONFIRMED. CONFIRMED happens via Stripe webhook (P1-11). |
+| Pricing computed at accept time | Spec §3.2: "Pricing set when Worker accepts, locked at Confirmed." totalAmountCAD stored on the job so Stripe (P1-11) can read it as the escrow amount. |
+| Commission tiers (0%/8%/15%) | Founding Worker 0%, early-adopter (first 10 jobs, 12-month window) 8%, standard 15%. |
+| AtomicBoolean in recoverPendingDispatches | Spring fires ContextRefreshedEvent twice in a Spring MVC app (root + web context). Guard prevents double-query and double-scheduling. |
+| QuartzConfig as empty @Configuration | All Quartz config is in YAML. SpringBeanJobFactory auto-configured by spring-boot-starter-quartz. Phase 2: JDBC store + Cloud SQL. |
+
+### Verification
+- `mvn compile -q` — BUILD SUCCESS, 0 errors
+- `mvn test -q` — all existing tests pass
+- Pushed to GitHub — Backend Deploy workflow triggered
+
+**Commit:** `feat: P1-09 + P1-10 Worker matching and sequential dispatch`
+
+**Next task:** P1-11 — Stripe Payment Intents (escrow)
