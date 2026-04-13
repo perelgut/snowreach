@@ -1393,3 +1393,41 @@ PaymentService.refundJob had an unreachable `catch (InterruptedException | Execu
 **Commit:** `feat: P1-11 + P1-12 Stripe escrow, Connect payouts, and refunds`
 
 **Next task:** P1-13 — Full job state machine (transition-table validation)
+
+---
+
+## 2026-04-13 — P1-13 + P1-14: Job State Machine and Cancellation
+
+### Context
+With escrow and dispatch working, we need a single authoritative transition method so no code can put a job into an invalid state. P1-13 adds the validated state machine; P1-14 adds cancellation with the $10 post-confirmation fee.
+
+### Files created / modified
+
+| File | Change |
+|---|---|
+| `service/JobService.java` | Added `transition()` (validated path, Firestore runTransaction), `cancelJob()` (returns previous status), `TRANSITIONS` map, `CANCELLABLE_STATUSES` set, `validateActorPermission()`, `applyLifecycleTimestamp()`, `handleSideEffects()`, `scheduleAutoRelease()`. Injected `Quartz Scheduler`. |
+| `scheduler/DisputeTimerJob.java` | Quartz `@DisallowConcurrentExecution` job. Fires 4hr after COMPLETE. If job still COMPLETE, calls `transition(RELEASED, "system")`. No-op otherwise. |
+| `service/PaymentService.java` | Added `cancelPaymentIntent()` (cancels PI for PENDING_DEPOSIT cancellations) and `cancelWithFee()` (partial capture $11.30 + refund of remainder, stores `cancellationFeeCAD = 10.00`). |
+| `controller/JobController.java` | Added PaymentService injection. New endpoints: `/start` (WORKER→IN_PROGRESS), `/complete` (WORKER→COMPLETE), `/cannot-complete` (WORKER→INCOMPLETE with reason/note), `/dispute` (REQUESTER→DISPUTED), `/release` (ADMIN→RELEASED + payout), `/cancel` (REQUESTER or ADMIN, orchestrates payment ops). |
+| `dto/CannotCompleteRequest.java` | `{reason: string, note: string}` — reason validated against allowed enum values. |
+
+### Design decisions
+
+| Decision | Reason |
+|---|---|
+| `transition()` uses Firestore runTransaction | Atomically reads current status + validates + writes. Prevents TOCTOU races (e.g. two clients both trying to transition simultaneously). |
+| Keep `transitionStatus()` alongside `transition()` | Stripe webhook and DispatchService are trusted internal callers. Bypassing validation avoids re-validating what the system already knows is correct. |
+| `cancelJob()` returns previous status | The controller needs to decide which Stripe operation to trigger. Returning the previous status avoids a second Firestore read. |
+| Controller orchestrates cancellation Stripe ops | No circular dependency between JobService and PaymentService. Controller is the natural orchestration layer for cross-service flows. |
+| DisputeTimerJob no-op if not COMPLETE | DISPUTED, RELEASED, REFUNDED etc. mean the dispute/rating flow superseded the timer. Always check current status rather than assuming. |
+| 2-hour dispute window enforced in validateActorPermission | Business rule from spec §CLAUDE.md. Throws InvalidTransitionException (→ 409) so the Requester gets a clear error message. |
+| `cannot-complete` uses `transitionStatus()` not `transition()` | The endpoint sets extra fields (reason, note, timestamp) that the generic `transition()` doesn't know about. Using the low-level writer with extra fields is cleaner here. |
+
+### Verification
+- `mvn compile -q` — BUILD SUCCESS, 0 errors
+- `mvn test -q` — all tests pass
+- Pushed to GitHub — Backend Deploy workflow triggered
+
+**Commit:** `feat: P1-13 + P1-14 job state machine and cancellation with fee`
+
+**Next task:** P1-15 — Firebase Storage image upload
