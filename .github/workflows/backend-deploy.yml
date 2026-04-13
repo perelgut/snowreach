@@ -61,13 +61,22 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker northamerica-northeast2-docker.pkg.dev --quiet
 
-      # Build the Docker image via Cloud Build and push to Artifact Registry.
-      # Using Cloud Build (not local docker build) avoids needing Docker on the runner
-      # and keeps build logs in GCP for auditability.
-      - name: Build and push Docker image
-        run: |
-          gcloud builds submit backend/ \
-            --tag ${{ env.IMAGE }}:${{ github.sha }}
+      # Set up JDK 21 so the Maven wrapper inside the Dockerfile layer cache works,
+      # and to allow a local 'mvn test' step in future if needed.
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # Build the Docker image locally on the runner (avoids Cloud Build log-streaming
+      # permission requirements — the service account only needs Artifact Registry Writer).
+      - name: Build Docker image
+        run: docker build -t ${{ env.IMAGE }}:${{ github.sha }} backend/
+
+      # Push the built image to Artifact Registry.
+      - name: Push Docker image to Artifact Registry
+        run: docker push ${{ env.IMAGE }}:${{ github.sha }}
 
       # Deploy the new image to Cloud Run.
       # Secrets are pulled from GCP Secret Manager at runtime — never stored in
