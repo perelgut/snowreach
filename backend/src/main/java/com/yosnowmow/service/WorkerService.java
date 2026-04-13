@@ -53,11 +53,14 @@ public class WorkerService {
     private final Firestore firestore;
     private final FirebaseAuth firebaseAuth;
     private final UserService userService;
+    private final GeocodingService geocodingService;
 
-    public WorkerService(Firestore firestore, FirebaseAuth firebaseAuth, UserService userService) {
+    public WorkerService(Firestore firestore, FirebaseAuth firebaseAuth,
+                         UserService userService, GeocodingService geocodingService) {
         this.firestore = firestore;
         this.firebaseAuth = firebaseAuth;
         this.userService = userService;
+        this.geocodingService = geocodingService;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -158,12 +161,18 @@ public class WorkerService {
             updates.put("worker.designation", req.getDesignation());
 
         if (req.getBaseAddressFullText() != null) {
-            // Store address text; baseCoords will be populated by GeocodingService (P1-07)
-            Address addr = new Address(req.getBaseAddressFullText());
-            updates.put("worker.baseAddress", addr);
-            // Clear coords so the geocoding service knows to re-geocode
-            updates.put("worker.baseCoords", null);
-            updates.put("worker.addressGeocodeMethod", null);
+            updates.put("worker.baseAddress", new Address(req.getBaseAddressFullText()));
+            // Re-geocode; fall back to null coords on failure (worker skipped by matching)
+            try {
+                GeocodingService.GeocodeResult geo =
+                        geocodingService.geocode(req.getBaseAddressFullText());
+                updates.put("worker.baseCoords",            geo.coords());
+                updates.put("worker.addressGeocodeMethod",  geo.method());
+            } catch (GeocodingService.GeocodingException ex) {
+                log.warn("Could not geocode updated base address: {}", ex.getMessage());
+                updates.put("worker.baseCoords",           null);
+                updates.put("worker.addressGeocodeMethod", null);
+            }
         }
 
         if (req.getServiceRadiusKm() != null)
@@ -282,7 +291,18 @@ public class WorkerService {
         WorkerProfile p = new WorkerProfile();
         p.setDesignation(req.getDesignation());
         p.setBaseAddress(new Address(req.getBaseAddressFullText()));
-        // baseCoords left null — GeocodingService (P1-07) will populate it
+
+        // Geocode the base address — non-fatal: profile saves even if geocoding fails,
+        // but the worker will be skipped by matching until coords are populated.
+        try {
+            GeocodingService.GeocodeResult geo = geocodingService.geocode(req.getBaseAddressFullText());
+            p.setBaseCoords(geo.coords());
+            p.setAddressGeocodeMethod(geo.method());
+        } catch (GeocodingService.GeocodingException ex) {
+            log.warn("Could not geocode base address for new worker; coords will be null. {}",
+                    ex.getMessage());
+        }
+
         p.setServiceRadiusKm(req.getServiceRadiusKm());
         p.setBufferOptIn(req.getBufferOptIn());
         p.setTiers(mapTiers(req.getTiers()));

@@ -1180,3 +1180,39 @@ The IMPLEMENTATION_PLAN.md (drafted before the spec was finalized) described a s
 **Commit:** `feat: P1-06 Worker profile API`
 
 **Next task:** P1-07 — Geocoding service (Google Maps server-side → FSA centroid fallback)
+
+---
+
+## 2026-04-12 — P1-07: Geocoding Service
+
+### Context
+P1-06 left `baseCoords` null on Worker profiles because there was no geocoder yet. P1-07 implements the full fallback chain from spec §10.1 and wires it into WorkerService so new profiles are geocoded immediately on activation.
+
+### Files created / modified
+
+| File | Change |
+|---|---|
+| `util/HashUtils.java` | SHA-256 utility: `sha256(String)` and `sha256Parts(String...)` (null-byte separated, preventing length-extension blending). Used by GeocodingService for cache keys and by AuditLogService (P1-20) for hash chaining. |
+| `util/GeoUtils.java` | `haversineDistanceKm()`, `normalizeAddress()`, `extractFSA()`, `extractFSAFromAddress()` (regex-based postal code scanner). |
+| `service/GeocodingService.java` | Full three-tier fallback: Google Maps API → FSA centroid → GeocodingException. Caches results in `geocache/{sha256(normalised)}` for 30 days. Accepts only ROOFTOP and RANGE_INTERPOLATED quality from Google Maps. 44 FSA centroids covering GTA, Hamilton, Ottawa, and major Ontario cities. |
+| `service/WorkerService.java` | Injected GeocodingService; `buildInitialProfile()` now geocodes on activation; `updateWorkerProfile()` re-geocodes when address changes. Both are non-fatal — profile saves even on geocoding failure, but worker is skipped by matching until coords are non-null. |
+
+### Design decisions
+
+| Decision | Reason |
+|---|---|
+| ROOFTOP and RANGE_INTERPOLATED only from Google Maps | GEOMETRIC_CENTER and APPROXIMATE are area centroids (city/neighbourhood level) — not accurate enough for km-precise distance pricing. Using a low-quality result would silently mis-price jobs. |
+| Google Maps API exceptions → FSA fallback, not 500 | Geocoding is not in the critical path of job dispatch; a degraded result (FSA centroid) is better than blocking registration. Worker is still matchable within ~2 km accuracy. |
+| Cache key = SHA-256(normalised address) | Prevents cache pollution from capitalisation/whitespace variants of the same address. The normalised form is stored nowhere sensitive — only the hash. |
+| API key never logged (logged as "[redacted]" in warn message) | Key security: even in error paths, the key must not appear in logs which may be exported to GCP Cloud Logging. |
+| `sha256Parts` uses null-byte separator | Prevents field-boundary collisions (e.g. "ABC" + "DEF" == "ABCD" + "EF" if just concatenated). Standard practice for multi-field hashing. |
+| FSA centroid fallback covers ~44 Ontario FSAs | Covers all planned Phase 1 launch zones plus surrounding catchment. Table is easy to extend as new zones activate. |
+| Geocoding non-fatal on Worker activation | Worker can complete registration even if address can't be geocoded (e.g. typo). Admin or the worker can update the address later. Matching skips null-coord workers gracefully. |
+
+### Verification
+- `mvn compile -q` — BUILD SUCCESS, 0 errors
+- `mvn test -q` — all existing tests pass
+
+**Commit:** `feat: P1-07 Geocoding service with FSA fallback and Firestore cache`
+
+**Next task:** P1-08 — Job posting API (POST /jobs; validate address; REQUESTED → PENDING_DEPOSIT)
