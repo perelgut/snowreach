@@ -1216,3 +1216,40 @@ P1-06 left `baseCoords` null on Worker profiles because there was no geocoder ye
 **Commit:** `feat: P1-07 Geocoding service with FSA fallback and Firestore cache`
 
 **Next task:** P1-08 — Job posting API (POST /jobs; validate address; REQUESTED → PENDING_DEPOSIT)
+
+---
+
+## 2026-04-12 — P1-08: Job Posting API
+
+### Context
+P1-07 gave us geocoding. P1-08 uses it: the Requester posts a job, the address is geocoded, the job is written to Firestore in REQUESTED state, and an audit entry is written. Dispatch (P1-09/P1-10) will pick up from there.
+
+### Files created / modified
+
+| File | Change |
+|---|---|
+| `model/AuditEntry.java` | Full model: entryId, actorUid, action, entityType, entityId, beforeJson, afterJson, previousHash, entryHash, timestamp. |
+| `service/AuditLogService.java` | Full implementation with hash chaining: fetches latest entryHash for entity, computes SHA-256(previousHash\0timestamp\0actorUid\0action\0entityId\0beforeJson\0afterJson), writes to `auditLog` collection in audit Firestore project. Non-fatal — audit failures log but don't block operations. |
+| `model/Job.java` | Full spec §3.2 model: identity, scope, location, scheduling, images, pricing (all null at creation), payment, all 12 lifecycle timestamps, cancellation, cannot-complete, dispute, dispatch fields, selectedWorkerIds (not in spec but needed for selected-worker feature). |
+| `dto/CreateJobRequest.java` | scope[], propertyAddressText, startWindowEarliest/Latest (Instant), notesForWorker, personalWorkerOnly, selectedWorkerIds, requestImageIds. |
+| `service/JobService.java` | createJob(): user exists check, active-job guard (one per Requester), scope validation, geocode, audit write, Firestore write. getJob(), getJobForCaller() (with access check), listJobs() (admin), listJobsForUser() (own jobs as requester + worker). setOfferRound() and markWorkerContacted() stubs for P1-10. |
+| `controller/JobController.java` | POST /api/jobs (@RequiresRole("requester")), GET /api/jobs/{jobId} (with address redaction for Workers pre-CONFIRMED), GET /api/jobs (user's own jobs or admin filter). |
+
+### Design decisions
+
+| Decision | Reason |
+|---|---|
+| Pricing fields null at creation | Spec §3.2 is explicit: "Pricing (set when Worker accepts, locked at Confirmed)". The implementation plan draft pre-calculated prices — that was wrong. |
+| Requester provides address per job (not from profile) | Allows posting for a parent's/tenant's address — common use case. Profile address is only used for zone checking at registration. |
+| Property address redacted from Workers until CONFIRMED | Spec §5.3 requirement — prevents Workers from showing up at an address before the escrow is received. |
+| AuditLogService non-fatal | Audit gap is better than blocking a user operation. The gap will be detectable by the chain integrity check (P1-20). |
+| Active-job guard uses `whereIn` on status set | Single Firestore query rather than fetching all requester jobs and filtering in Java. |
+| One active job per Requester (Phase 1) | Spec BR rule. Prevents a Requester from tying up multiple Workers. Relaxed in Phase 2. |
+
+### Verification
+- `mvn compile -q` — BUILD SUCCESS, 0 errors
+- `mvn test -q` — all existing tests pass
+
+**Commit:** `feat: P1-08 Job posting API`
+
+**Next task:** P1-09 — Worker matching algorithm (filter by service area, rank by rating then distance)
