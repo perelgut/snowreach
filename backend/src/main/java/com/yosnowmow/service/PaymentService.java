@@ -88,13 +88,16 @@ public class PaymentService {
     private final Firestore firestore;
     private final JobService jobService;
     private final AuditLogService auditLogService;
+    private final NotificationService notificationService;
 
     public PaymentService(Firestore firestore,
                           JobService jobService,
-                          AuditLogService auditLogService) {
+                          AuditLogService auditLogService,
+                          NotificationService notificationService) {
         this.firestore = firestore;
         this.jobService = jobService;
         this.auditLogService = auditLogService;
+        this.notificationService = notificationService;
     }
 
     /** Sets the Stripe API key once Spring has injected the {@code @Value} fields. */
@@ -491,6 +494,10 @@ public class PaymentService {
 
             log.info("Transfer {} ({} ¢ CAD) released to worker {} for job {}",
                     transfer.getId(), payoutCents, job.getWorkerId(), jobId);
+
+            // Notify the Worker that their payout has been sent (P1-17).
+            notificationService.sendPayoutReleasedEmail(
+                    job.getWorkerId(), payoutCents / 100.0, jobId);
 
         } catch (ResponseStatusException e) {
             throw e;

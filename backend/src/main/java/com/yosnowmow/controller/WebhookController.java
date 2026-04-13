@@ -202,6 +202,11 @@ public class WebhookController {
 
             log.info("Job {} → CONFIRMED (intent {})", jobId, pi.getId());
 
+            // Send confirmation emails to both parties now that payment is cleared.
+            var confirmedJob = jobService.getJob(jobId);
+            notificationService.sendJobConfirmedEmail(
+                    confirmedJob.getRequesterId(), confirmedJob.getWorkerId(), confirmedJob);
+
         } catch (Exception e) {
             log.error("Failed to confirm job {}: {}", jobId, e.getMessage(), e);
             throw e; // re-throw so caller logs it as an event processing error

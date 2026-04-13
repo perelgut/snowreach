@@ -89,17 +89,20 @@ public class JobService {
     private final GeocodingService geocodingService;
     private final AuditLogService auditLogService;
     private final org.quartz.Scheduler quartzScheduler;
+    private final NotificationService notificationService;
 
     public JobService(Firestore firestore,
                       UserService userService,
                       GeocodingService geocodingService,
                       AuditLogService auditLogService,
-                      org.quartz.Scheduler quartzScheduler) {
+                      org.quartz.Scheduler quartzScheduler,
+                      NotificationService notificationService) {
         this.firestore = firestore;
         this.userService = userService;
         this.geocodingService = geocodingService;
         this.auditLogService = auditLogService;
         this.quartzScheduler = quartzScheduler;
+        this.notificationService = notificationService;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -475,6 +478,13 @@ public class JobService {
 
         log.info("Job {} cancelled from {} by {} ({})", jobId, previousStatus, actorUid,
                 cancelledBy);
+
+        // Cancellation fee applies when the job was already CONFIRMED (spec: $10 + 13% HST).
+        boolean feeCharged = "CONFIRMED".equals(previousStatus);
+        double feeCAD = feeCharged ? 11.30 : 0.0;
+        notificationService.sendCancellationEmail(
+                job.getRequesterId(), job.getWorkerId(), feeCharged, feeCAD, jobId);
+
         return previousStatus;
     }
 
@@ -623,9 +633,27 @@ public class JobService {
         }
     }
 
+    /**
+     * Sends email notifications for lifecycle transitions that require them.
+     * Runs after the Firestore transaction has committed.
+     * Notification failures are swallowed inside NotificationService — they never
+     * propagate back here.
+     */
     private void notifyTransition(String jobId, String toStatus, String actorUid) {
-        log.debug("TODO P1-17/P1-18 — notifyTransition: job={} status={} actor={}",
-                jobId, toStatus, actorUid);
+        if (!"IN_PROGRESS".equals(toStatus) && !"COMPLETE".equals(toStatus)) {
+            return; // other statuses handled elsewhere (CONFIRMED → WebhookController, etc.)
+        }
+        try {
+            Job job = getJob(jobId);
+            if ("IN_PROGRESS".equals(toStatus)) {
+                notificationService.sendJobInProgressEmail(job.getRequesterId(), job);
+            } else {
+                notificationService.sendJobCompleteEmail(job.getRequesterId(), job.getWorkerId(), job);
+            }
+        } catch (Exception e) {
+            log.error("Failed to send transition notification for job {} → {}: {}",
+                    jobId, toStatus, e.getMessage(), e);
+        }
     }
 
     // ── Package-private — used by other services ──────────────────────────────

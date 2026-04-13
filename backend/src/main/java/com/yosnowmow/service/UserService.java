@@ -57,10 +57,14 @@ public class UserService {
 
     private final Firestore firestore;
     private final FirebaseAuth firebaseAuth;
+    private final NotificationService notificationService;
 
-    public UserService(Firestore firestore, FirebaseAuth firebaseAuth) {
+    public UserService(Firestore firestore,
+                       FirebaseAuth firebaseAuth,
+                       NotificationService notificationService) {
         this.firestore = firestore;
         this.firebaseAuth = firebaseAuth;
+        this.notificationService = notificationService;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -117,6 +121,11 @@ public class UserService {
         setCustomClaims(uid, req.getRoles());
 
         log.info("User registered: uid={} roles={}", uid, req.getRoles());
+
+        // Send welcome email (P1-17). Tone based on primary role.
+        String primaryRole = req.getRoles().contains("worker") ? "WORKER" : "REQUESTER";
+        notificationService.sendWelcomeEmail(uid, req.getName(), primaryRole);
+
         return user;
     }
 

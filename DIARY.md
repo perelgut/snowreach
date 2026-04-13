@@ -1783,3 +1783,104 @@ shows all env vars and secret references on the running revision. Useful for ver
 | P1-21 — Firestore security rules | Not started |
 | P1-22 — Integration test suite | Not started |
 | P1-23 — Production deployment | Not started |
+
+---
+
+## 2026-04-13 — Session 9: P1-17 SendGrid Email Notifications
+
+### Context
+
+Session 9 is a continuation of Session 8 (context window exhausted). P1-14 through P1-16 were completed in Session 8. This session implements P1-17 from scratch through to commit.
+
+### P1-17 — SendGrid Email Notifications
+
+**Design decisions:**
+- All email methods are `@Async` so callers never block waiting for email delivery.
+- All email methods have a try-catch that swallows exceptions — email failure must never propagate to a business transaction. An error is logged but the caller proceeds.
+- Dev safety: if `sendgridApiKey` starts with `"placeholder"`, all sends are skipped at DEBUG level. This means the code can be exercised in a local/dev environment without a real SendGrid key.
+- User email addresses are resolved from **Firebase Auth** (via `firebaseAuth.getUser(uid).getEmail()`) — the authoritative source. We do not store email in Firestore because Firebase Auth owns the email field and it can be changed there.
+- `sendGridClient` is initialized via `@PostConstruct` so that the `@Value`-injected `sendgridApiKey` is available.
+
+**Files changed:**
+
+`backend/src/main/java/com/yosnowmow/service/NotificationService.java` — **complete rewrite** from 4-method stub (P1-05 wiring stubs) to full implementation. All 10 methods implemented:
+
+| Method | Called from | Purpose |
+|---|---|---|
+| `sendJobRequest(workerUid, jobId)` | `DispatchService` | Push stub (P1-18) |
+| `notifyRequesterJobAccepted(requesterId, jobId, workerId)` | `DispatchService` | Worker accepted — complete payment |
+| `sendWelcomeEmail(uid, displayName, role)` | `UserService.createUser()` | New user registration |
+| `sendJobConfirmedEmail(requesterId, workerId, job)` | `WebhookController` | Payment cleared → CONFIRMED |
+| `sendJobInProgressEmail(requesterId, job)` | `JobService` | Job → IN_PROGRESS |
+| `sendJobCompleteEmail(requesterId, workerId, job)` | `JobService` | Job → COMPLETE |
+| `sendPayoutReleasedEmail(workerId, amountCAD, jobId)` | `PaymentService` | Transfer → Worker |
+| `sendDisputeOpenedEmail(requesterId, workerId, jobId)` | `DisputeService` (P1-07 stub) | Dispute → DISPUTED |
+| `sendDisputeResolvedEmail(requesterId, workerId, resolution, job)` | `DisputeService` (P1-07 stub) | Admin resolved dispute |
+| `sendCancellationEmail(requesterId, workerId, feeCharged, feeCAD, jobId)` | `JobService.cancelJob()` | Job cancelled |
+| `notifyRequesterNoWorkers(requesterId, jobId)` | `DispatchService` | No workers found |
+| `notifyPaymentFailed(requesterId, jobId)` | `WebhookController` | Stripe payment_failed event |
+
+Private helpers: `lookupEmail(uid)`, `sendEmail(to, subject, html)`, `buildHtml(heading, content)`, `formatCad(Double)`, `formatAddress(Address)`.
+
+`backend/src/main/java/com/yosnowmow/service/JobService.java`:
+- Added `NotificationService notificationService` field (6th constructor parameter)
+- `notifyTransition(jobId, toStatus, actorUid)` replaced from stub to real implementation: sends `sendJobInProgressEmail` on `IN_PROGRESS`, `sendJobCompleteEmail` on `COMPLETE`
+- Added cancellation email at end of `cancelJob()`:
+  ```java
+  boolean feeCharged = "CONFIRMED".equals(previousStatus);
+  double feeCAD = feeCharged ? 11.30 : 0.0;
+  notificationService.sendCancellationEmail(
+      job.getRequesterId(), job.getWorkerId(), feeCharged, feeCAD, jobId);
+  ```
+  Note: 11.30 is the total charge ($10 fee + $1.30 HST). The fee field on the job stores `10.00` (pre-tax) per `cancelWithFee()`.
+
+`backend/src/main/java/com/yosnowmow/controller/WebhookController.java`:
+- Added `sendJobConfirmedEmail` call in `handlePaymentSucceeded()` after job transitions to CONFIRMED:
+  ```java
+  var confirmedJob = jobService.getJob(jobId);
+  notificationService.sendJobConfirmedEmail(
+      confirmedJob.getRequesterId(), confirmedJob.getWorkerId(), confirmedJob);
+  ```
+
+`backend/src/main/java/com/yosnowmow/service/PaymentService.java`:
+- Added `NotificationService notificationService` field (4th constructor parameter)
+- Added `sendPayoutReleasedEmail` call in `releasePayment()` after successful Stripe transfer:
+  ```java
+  notificationService.sendPayoutReleasedEmail(
+      job.getWorkerId(), payoutCents / 100.0, jobId);
+  ```
+  The `payoutCents` variable already includes the HST portion (if any), matching the amount actually transferred.
+
+`backend/src/main/java/com/yosnowmow/service/UserService.java`:
+- Added `NotificationService notificationService` field (3rd constructor parameter)
+- Added welcome email call at end of `createUser()`:
+  ```java
+  String primaryRole = req.getRoles().contains("worker") ? "WORKER" : "REQUESTER";
+  notificationService.sendWelcomeEmail(uid, req.getName(), primaryRole);
+  ```
+  If the user registered with both roles, the welcome email uses "WORKER" tone (dual-role users are more likely primary workers wanting the setup guidance).
+
+**Call sites NOT yet wired (deferred to P1-07 dispute implementation):**
+- `sendDisputeOpenedEmail` — wires in `DisputeService.openDispute()` (stub file)
+- `sendDisputeResolvedEmail` — wires in `DisputeService.resolveDispute()` (stub file)
+
+**Build verification:** `mvn compile` passed with no errors after all changes.
+
+**Pre-production checklist for SendGrid:**
+1. Add real `SENDGRID_API_KEY` to GCP Secret Manager (`yosnowmow-dev` and `yosnowmow-prod`)
+2. Authenticate domain at SendGrid → Settings → Sender Authentication → Authenticate Your Domain
+3. Add SPF, DKIM DNS records from SendGrid to domain registrar
+4. Add DMARC record: `_dmarc.yosnowmow.com TXT "v=DMARC1; p=none; rua=mailto:dmarc@yosnowmow.com"`
+5. Verify domain in SendGrid before going to production
+
+### Phase 1 remaining tasks (updated)
+
+| Task | Status |
+|---|---|
+| P1-17 — SendGrid email notifications | **Complete** |
+| P1-18 — Firebase FCM push notifications | Not started |
+| P1-19 — Admin dashboard live data | Not started |
+| P1-20 — Audit log hash chain verification | Not started |
+| P1-21 — Firestore security rules | Not started |
+| P1-22 — Integration test suite | Not started |
+| P1-23 — Production deployment | Not started |
