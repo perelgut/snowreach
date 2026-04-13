@@ -73,17 +73,14 @@
         </dependency>
 
         <!-- ── Firebase Admin SDK ───────────────────────────────── -->
+        <!-- grpc-netty-shaded must NOT be excluded: the Firestore Admin SDK
+             uses gRPC (not HTTP/1.1) to communicate with Firestore.
+             Without a gRPC transport on the classpath the app fails to start
+             with ManagedChannelProvider$ProviderNotFoundException.          -->
         <dependency>
             <groupId>com.google.firebase</groupId>
             <artifactId>firebase-admin</artifactId>
             <version>${firebase-admin.version}</version>
-            <!-- Exclude Netty transport — Spring Boot uses its own HTTP client -->
-            <exclusions>
-                <exclusion>
-                    <groupId>io.grpc</groupId>
-                    <artifactId>grpc-netty-shaded</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
 
         <!-- ── Stripe ───────────────────────────────────────────── -->
