@@ -1578,4 +1578,73 @@ echo -n "yosnowmow-prod.appspot.com" | \
 
 **Commit:** `fix: add FIREBASE_STORAGE_BUCKET to Cloud Run --set-secrets (P1-15 gap)`
 
-**Next task:** P1-15 — Firebase Storage image upload
+**Next task:** P1-17 — SendGrid email notifications
+
+---
+
+## 2026-04-13 — Manual infrastructure actions completed
+
+### Context
+
+Following the secrets audit, five manual actions were executed to bring the infrastructure up to date with the code deployed in P1-11 through P1-15. This session also produced two important discoveries about the project's infrastructure layout.
+
+---
+
+### Discovery 1: All infrastructure is in `yosnowmow-dev`, not `yosnowmow-prod`
+
+Running `gcloud run services list` against both projects revealed that `yosnowmow-prod` has zero Cloud Run services. The backend (`yosnowmow-api`) is deployed to `yosnowmow-dev`:
+
+```
+SERVICE        REGION                   URL
+yosnowmow-api  northamerica-northeast2  https://yosnowmow-api-463057570685.northamerica-northeast2.run.app
+LAST DEPLOYED BY: github-actions-deploy@yosnowmow-dev.iam.gserviceaccount.com
+```
+
+The `GOOGLE_CLOUD_PROJECT` GitHub Secret contains `yosnowmow-dev`. The `yosnowmow-prod` Firebase project exists but is not yet wired to any GCP infrastructure — that migration is a Phase 2 concern.
+
+**Key facts established:**
+- GCP project: `yosnowmow-dev`
+- GCP project number: `463057570685`
+- Cloud Run service account (ADC identity): `463057570685-compute@developer.gserviceaccount.com`
+- Cloud Run URL: `https://yosnowmow-api-463057570685.northamerica-northeast2.run.app`
+
+---
+
+### Discovery 2: Firebase Storage bucket uses new `.firebasestorage.app` URL format
+
+Firebase projects created after mid-2024 use `{project-id}.firebasestorage.app` instead of the legacy `{project-id}.appspot.com` bucket name format. The actual bucket name for this project is `yosnowmow-dev.firebasestorage.app`.
+
+The earlier diary note and `application.yml` default (`yosnowmow-dev.appspot.com`) were incorrect — updated accordingly.
+
+---
+
+### Orphaned secret (harmless)
+
+During Action 1 the first attempt targeted `--project=yosnowmow-prod` before the infrastructure layout was confirmed. This created an orphaned `FIREBASE_STORAGE_BUCKET` secret in `yosnowmow-prod` Secret Manager with an incorrect `.appspot.com` bucket name. It is harmless (nothing reads from `yosnowmow-prod`) but can be deleted at any time:
+
+```bash
+gcloud secrets delete FIREBASE_STORAGE_BUCKET --project=yosnowmow-prod
+```
+
+---
+
+### Actions completed
+
+| # | Action | Outcome |
+|---|---|---|
+| 1 | Created `FIREBASE_STORAGE_BUCKET` secret in `yosnowmow-dev` GCP Secret Manager with value `yosnowmow-dev.firebasestorage.app` | ✅ `Created version [1]` |
+| 2 | Granted `roles/storage.objectAdmin` to `463057570685-compute@developer.gserviceaccount.com` on `gs://yosnowmow-dev.firebasestorage.app` | ✅ Confirmed via `gcloud storage buckets get-iam-policy` |
+| 3 | Deployed Firebase Storage security rules (`allow read, write: if false`) to `yosnowmow-dev` via `firebase deploy --only storage` | ✅ |
+| 4 | Registered Stripe webhook endpoint `…/webhooks/stripe` in Stripe Dashboard for events `payment_intent.amount_capturable_updated`, `payment_intent.succeeded`, `payment_intent.payment_failed`. Updated `STRIPE_WEBHOOK_SECRET` to real `whsec_…` value (`Created version [2]`). Redeployed Cloud Run revision `yosnowmow-api-00011-lnm` to pick up new secret. | ✅ |
+| 5 | Set `VITE_API_BASE_URL` GitHub Secret to `https://yosnowmow-api-463057570685.northamerica-northeast2.run.app` | ✅ |
+
+### Notes on Stripe Dashboard navigation (2024+ redesign)
+
+The Stripe Dashboard was redesigned in 2024. The path to create a webhook is now:
+- Navigate to `https://dashboard.stripe.com/test/webhooks`
+- Click **Add destination**
+- Select events first (search "payment_intent", scroll to find all three)
+- Choose **Your account** as event source
+- Choose **Webhook endpoint** as destination type
+- Enter the URL
+- The signing secret appears on the destination detail page under **Signing secret → Reveal**
