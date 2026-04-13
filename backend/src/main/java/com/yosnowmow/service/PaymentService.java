@@ -215,6 +215,127 @@ public class PaymentService {
         return webhookSecret;
     }
 
+    // ── Cancellation helpers — P1-14 ──────────────────────────────────────────
+
+    /**
+     * Cancels the Stripe PaymentIntent for a job that is being cancelled before
+     * any payment was captured (REQUESTED or PENDING_DEPOSIT state).
+     *
+     * If the job has no PaymentIntent (REQUESTED state) this method is a no-op.
+     *
+     * @param jobId Firestore document ID
+     */
+    public void cancelPaymentIntent(String jobId) {
+        try {
+            Job job = jobService.getJob(jobId);
+            if (job.getStripePaymentIntentId() == null) {
+                log.debug("cancelPaymentIntent: job {} has no PaymentIntent — nothing to cancel",
+                        jobId);
+                return;
+            }
+
+            PaymentIntent intent = PaymentIntent.retrieve(job.getStripePaymentIntentId());
+            // Only cancel if still cancellable (requires_payment_method, requires_confirmation,
+            // requires_action, or requires_capture).
+            String status = intent.getStatus();
+            if (status.startsWith("requires_") || "processing".equals(status)) {
+                intent.cancel();
+                log.info("PaymentIntent {} cancelled for job {} (was: {})",
+                        intent.getId(), jobId, status);
+            } else {
+                log.warn("PaymentIntent {} for job {} is in status {} — cannot cancel",
+                        intent.getId(), jobId, status);
+            }
+
+        } catch (StripeException e) {
+            log.error("Stripe error cancelling intent for job {}: {}", jobId, e.getMessage(), e);
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "Could not cancel payment");
+        }
+    }
+
+    /**
+     * Applies the $10 CAD (+13% HST = $11.30) cancellation fee when a job is
+     * cancelled after reaching CONFIRMED state.
+     *
+     * <p>Algorithm:
+     * <ol>
+     *   <li>Partially capture the PaymentIntent for $11.30 (fee + HST).</li>
+     *   <li>Refund the remainder ({@code totalAmountCAD} − $11.30).</li>
+     *   <li>Store {@code cancellationFeeCAD = 10.00} on the job document.</li>
+     * </ol>
+     *
+     * <p>If {@code totalAmountCAD} is ≤ $11.30 the entire amount is retained as
+     * the cancellation fee (edge case; normal jobs are always above $10).
+     *
+     * @param jobId Firestore document ID of the CONFIRMED job being cancelled
+     */
+    public void cancelWithFee(String jobId) {
+        try {
+            Job job = jobService.getJob(jobId);
+
+            if (job.getStripePaymentIntentId() == null) {
+                log.warn("cancelWithFee: job {} has no PaymentIntent — skipping fee", jobId);
+                return;
+            }
+            if (job.getTotalAmountCAD() == null) {
+                log.warn("cancelWithFee: job {} has no totalAmountCAD — skipping fee", jobId);
+                return;
+            }
+
+            // Cancellation fee: $10 CAD + 13% HST = $11.30 CAD = 1130 cents.
+            final long FEE_CENTS     = 1000L;
+            final long FEE_HST_CENTS =  130L;
+            final long CHARGE_CENTS  = FEE_CENTS + FEE_HST_CENTS; // 1130
+
+            long totalCents  = Math.round(job.getTotalAmountCAD() * 100);
+            long chargeCents = Math.min(CHARGE_CENTS, totalCents); // safety cap
+            long refundCents = totalCents - chargeCents;
+
+            // 1. Partially capture the PaymentIntent for the fee amount.
+            PaymentIntent intent = PaymentIntent.retrieve(job.getStripePaymentIntentId());
+
+            com.stripe.param.PaymentIntentCaptureParams captureParams =
+                    com.stripe.param.PaymentIntentCaptureParams.builder()
+                            .setAmountToCapture(chargeCents)
+                            .build();
+
+            intent.capture(captureParams);
+            log.info("Partial capture of {}¢ applied for cancellation fee on job {}",
+                    chargeCents, jobId);
+
+            // 2. Refund the remainder to the Requester.
+            if (refundCents > 0) {
+                RefundCreateParams refundParams = RefundCreateParams.builder()
+                        .setPaymentIntent(intent.getId())
+                        .setAmount(refundCents)
+                        .putMetadata("jobId",  jobId)
+                        .putMetadata("reason", "cancellation_after_confirmed")
+                        .build();
+
+                Refund.create(refundParams);
+                log.info("Refund of {}¢ issued to requester for job {} cancellation",
+                        refundCents, jobId);
+            }
+
+            // 3. Record the cancellation fee on the job document.
+            Map<String, Object> updates = new HashMap<>();
+            updates.put("cancellationFeeCAD", 10.00);
+            updates.put("updatedAt",          Timestamp.now());
+            firestore.collection(JOBS_COLLECTION).document(jobId).update(updates).get();
+
+        } catch (StripeException e) {
+            log.error("Stripe error applying cancellation fee for job {}: {}", jobId,
+                    e.getMessage(), e);
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "Could not apply cancellation fee");
+        } catch (InterruptedException | ExecutionException e) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to record cancellation fee");
+        }
+    }
+
     // ── Worker payouts — P1-12 ────────────────────────────────────────────────
 
     /**
