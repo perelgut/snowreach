@@ -97,6 +97,7 @@ jobs:
             --min-instances 1 \
             --max-instances 10 \
             --memory 512Mi \
+            --set-env-vars SPRING_PROFILE=prod \
             --set-secrets FIREBASE_PROJECT_ID=FIREBASE_PROJECT_ID:latest \
             --set-secrets STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest \
             --set-secrets STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest \
