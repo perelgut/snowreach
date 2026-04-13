@@ -1648,3 +1648,138 @@ The Stripe Dashboard was redesigned in 2024. The path to create a webhook is now
 - Choose **Webhook endpoint** as destination type
 - Enter the URL
 - The signing secret appears on the destination detail page under **Signing secret → Reveal**
+
+---
+
+## 2026-04-13 — Session 8: Smoke Testing and Bug Fixes
+
+### Context
+
+Resumed after Session 7. P1-13 (Disputes), P1-14 (Admin dispute resolution), P1-15 (Firebase Storage photo upload), and P1-16 (Ratings with mutual-release) were all completed in the previous session. This session focused on smoke testing the three riskiest areas identified at the end of Session 7, and fixing whatever bugs were found.
+
+---
+
+### Firestore Composite Indexes (P1-16 follow-up)
+
+**Problem:** `GET /api/jobs` returned HTTP 500 from Cloud Run with the error:
+```
+FAILED_PRECONDITION: The query requires an index.
+```
+Firestore requires explicit composite indexes for queries that combine `whereEqualTo` on one field with `orderBy` on a different field.
+
+**Root cause:** `JobService.listJobsForUser()` uses:
+- `whereEqualTo("requesterId", uid).orderBy("createdAt", DESC)` — requires composite index
+- `whereEqualTo("workerId", uid).orderBy("createdAt", DESC)` — requires composite index
+
+Five composite indexes were needed for the `jobs` collection. These were defined in `firebase/firestore.indexes.json` and deployed via `firebase deploy --only firestore:indexes`.
+
+**Gotcha:** Firestore auto-appends `__name__` to all composite indexes. Including an explicit `__name__` entry in `firestore.indexes.json` causes a `409 Conflict` on deploy. All five indexes were created correctly despite the 409 on the last entry (the 409 meant the index already existed from clicking the auto-generated URL in the error log).
+
+**Five indexes added:**
+
+| Fields | Purpose |
+|---|---|
+| `requesterId ASC` + `createdAt DESC` | Requester job list, newest first |
+| `workerId ASC` + `createdAt DESC` | Worker job list, newest first |
+| `status ASC` + `createdAt DESC` | Admin job list filtered by status |
+| `requesterId ASC` + `status ASC` | Requester jobs filtered by status |
+| `workerId ASC` + `status ASC` | Worker jobs filtered by status |
+
+**Committed:** `feat: P1-16 Firestore composite indexes for jobs collection` (commit `6e49c05`)
+
+**Standing rule established:** Any `whereEqualTo` + `orderBy` query combination on different fields requires a composite index in `firestore.indexes.json`. Add the index in the same commit as the query code.
+
+---
+
+### Smoke Test Results
+
+#### Smoke Test 1 — Health check
+`GET /api/health` → `{"status":"UP"}` HTTP 200 ✅
+
+#### Smoke Test 2 — Unauthenticated request
+`GET /api/jobs` (no token) → HTTP 401 ✅
+
+#### Smoke Test 3 — Authenticated GET /api/jobs
+`GET /api/jobs` with Firebase ID token → HTTP 200 `[]` ✅
+
+**Notes on Firebase Auth test user:** `test-requester@yosnowmow.dev` could not be used (no password reset access). Smoke testing used `testuser@example.com` created directly via the Firebase Auth REST API (`accounts:signUp`). The Firebase Web API key is in `frontend/.env.local` as `VITE_FIREBASE_API_KEY`.
+
+#### Smoke Test 4 — Stripe webhook
+After fixing multiple infrastructure issues (see below): HTTP 200, signature verified ✅
+
+Note: `stripe trigger payment_intent.succeeded` produces a "Could not deserialize Stripe event" warning. This is expected — the Stripe CLI creates synthetic events using the latest API version which may differ from the Java SDK's bundled schema version. Real Stripe events (from actual transactions) use the API version pinned to the Stripe account and will deserialize correctly.
+
+#### Smoke Test 5 — Firebase Storage endpoint
+`POST /api/jobs/fake-job-id/photos` → HTTP 403 ✅
+
+The 403 (not 404) is correct and expected: the endpoint has `@RequiresRole("worker")` and `testuser@example.com` has no roles. Auth and RBAC are both functioning. A worker-role user would receive 404 (job not found) for a fake job ID.
+
+---
+
+### Bugs Found and Fixed During Smoke Testing
+
+#### Bug 1 — DispatchService blocking application startup (225-second cold start)
+
+**Symptom:** Cloud Run logs showed `Started YoSnowMowApplication in 225.752 seconds`. Cloud Run's default startup timeout is 300 seconds — this left only 75 seconds of margin.
+
+**Root cause:** `DispatchService.recoverPendingDispatches()` was annotated with `@EventListener(ContextRefreshedEvent.class)`, which fires synchronously on the main startup thread. It called `firestore.collection(JOB_REQUESTS_COLLECTION).whereEqualTo("status", "PENDING").get().get()` — a blocking Firestore call. During Cloud Run cold starts, the gRPC TLS negotiation to Firestore takes several minutes due to network initialisation, and the Firestore SDK retries with exponential backoff. The main thread waited for this to resolve before completing startup.
+
+**Fix:** Extracted the Firestore query body into a private `runDispatchRecovery()` method and called it from a daemon thread inside `recoverPendingDispatches()`. Startup now returns immediately; recovery runs in the background seconds later.
+
+**Result:** Startup time reduced from ~225 seconds to ~6 seconds.
+
+**Committed:** `fix: non-blocking startup recovery in DispatchService` (commit `35b00d7`)
+
+---
+
+#### Bug 2 — Stripe webhook secret not injected / wrong value
+
+This bug had three layers:
+
+**Layer 1 — Wrong STRIPE_SECRET_KEY value in GCP Secret Manager**
+The `STRIPE_SECRET_KEY` secret in `yosnowmow-dev` Secret Manager contained the placeholder string `placeholder-set-in-P1-11` (never updated with the real key). Confirmed by `PaymentService` startup log: `Stripe initialized (key prefix: placeho…)`. Fixed by adding a new version with the real `sk_test_...` key.
+
+**Layer 2 — Wrong STRIPE_WEBHOOK_SECRET value in GCP Secret Manager**
+`STRIPE_WEBHOOK_SECRET` also contained a wrong value (either placeholder or previous attempt with incorrect bytes). The signature verification error "No signatures found matching the expected signature for payload" persisted even after multiple fix attempts.
+
+**Layer 3 — Trailing newline in secrets created via PowerShell pipe**
+The `echo "value" | gcloud secrets versions add` pattern in PowerShell passes the string through PowerShell's string pipeline, which adds a trailing `\r\n`. The Stripe SDK uses the secret as an HMAC-SHA256 key — a trailing newline changes the key and produces a different HMAC. The `python -c "import sys; sys.stdout.buffer.write(b'...')"` pipe approach can also be unreliable in Windows PowerShell due to encoding conversion.
+
+**Fix:** Used `[System.IO.File]::WriteAllText(path, value, [System.Text.Encoding]::ASCII)` to write the secret to a temp file with exact bytes (no trailing newline, no BOM), then passed `--data-file=path` to `gcloud secrets versions add`. This bypasses all PowerShell pipe encoding issues.
+
+**Standing rule established:** On Windows PowerShell, always use the file method to add GCP Secret Manager values:
+```powershell
+[System.IO.File]::WriteAllText("$env:TEMP\secret.txt", "VALUE", [System.Text.Encoding]::ASCII)
+gcloud secrets versions add SECRET_NAME --data-file="$env:TEMP\secret.txt" --project=PROJECT
+Remove-Item "$env:TEMP\secret.txt"
+```
+
+**Additional note — Stripe CLI now requires `stripe trigger` for test events:** The Stripe Dashboard "Send test event" button was removed in the 2024 redesign; it now requires the Stripe CLI. Install via `winget install Stripe.StripeCLI`, authenticate with `stripe login`, then `stripe trigger payment_intent.succeeded`.
+
+---
+
+### Other Discoveries
+
+**`gcloud run services describe` for secret audit:** The command
+```bash
+gcloud run services describe SERVICE --region=REGION --project=PROJECT --format="yaml(spec.template.spec.containers[0].env)"
+```
+shows all env vars and secret references on the running revision. Useful for verifying that `--set-secrets` in the deploy workflow is actually wiring up the secrets correctly.
+
+**Cloud Run secret timing:** Cloud Run resolves `:latest` secret versions at container startup, not per-request. If a new secret version is added after a revision starts, a new revision must be deployed to pick up the change. The workflow can be re-triggered manually from GitHub Actions → Backend Deploy → Run workflow without a code change.
+
+**`grep` / `xxd` not available in PowerShell:** Use `findstr /i "keyword"` instead of `grep`. For binary inspection, use Python: `python -c "import sys; data=sys.stdin.buffer.read(); print(len(data), repr(data))"`. The `.exe` suffix forces the real binary over PowerShell aliases: `curl.exe` instead of `curl`.
+
+---
+
+### Phase 1 remaining tasks
+
+| Task | Status |
+|---|---|
+| P1-17 — SendGrid email notifications | Not started |
+| P1-18 — Firebase FCM push notifications | Not started |
+| P1-19 — Admin dashboard live data | Not started |
+| P1-20 — Audit log hash chain verification | Not started |
+| P1-21 — Firestore security rules | Not started |
+| P1-22 — Integration test suite | Not started |
+| P1-23 — Production deployment | Not started |
