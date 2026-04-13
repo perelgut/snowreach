@@ -1351,3 +1351,45 @@ With jobs now being posted (P1-08), the platform needs to find eligible Workers 
 **Commit:** `feat: P1-09 + P1-10 Worker matching and sequential dispatch`
 
 **Next task:** P1-11 — Stripe Payment Intents (escrow)
+
+---
+
+## 2026-04-13 — P1-11 + P1-12: Stripe Escrow and Worker Payouts
+
+### Context
+With jobs reaching PENDING_DEPOSIT after Worker acceptance, the platform needs to collect the Requester's payment into escrow and later release it to the Worker. P1-11 covers the escrow (PaymentIntent) and P1-12 covers Worker onboarding and payout (Connect Express + Transfer).
+
+### Files created / modified
+
+| File | Change |
+|---|---|
+| `service/PaymentService.java` | Full P1-11 + P1-12 implementation. `createEscrowIntent`: PaymentIntent with `capture_method=MANUAL`, totalAmountCAD→cents, idempotency key, persists intent ID to Firestore. `capturePayment`: captures authorized intent. `createConnectOnboardingLink`: creates Express account if none exists, persists accountId, returns AccountLink URL. `releasePayment`: Transfer of workerPayoutCAD + hstAmountCAD to worker's Connect account; idempotency key; transitions job → RELEASED. `refundJob`: cancels intent if capturable, creates Refund if already succeeded; transitions job → REFUNDED. |
+| `controller/WebhookController.java` | POST /webhooks/stripe. Signature verification via `Webhook.constructEvent`. Idempotency via `stripeEvents/{eventId}` Firestore collection (Firestore transaction for atomic check+write). Handles: `payment_intent.amount_capturable_updated` (capture + depositReceivedAt), `payment_intent.succeeded` (CONFIRMED), `payment_intent.payment_failed` (notify stub, no auto-cancel). Returns 200 for all events including unhandled (prevents Stripe retries). |
+| `controller/PaymentController.java` | POST /api/jobs/{jobId}/payment-intent (REQUESTER + owns job), POST /api/workers/{uid}/connect-onboard, POST /api/jobs/{jobId}/release-payment (ADMIN), POST /api/jobs/{jobId}/refund (ADMIN). |
+| `service/JobService.java` | Added `transitionStatus(jobId, newStatus, actorUid, extraUpdates)` — low-level status write + audit without transition-table validation (that's P1-13). Used by PaymentService and WebhookController. |
+| `service/NotificationService.java` | Added `notifyPaymentFailed` stub. |
+| `model/Job.java` | Added `stripeTransferId` field for the Stripe Transfer ID created at RELEASED. |
+
+### Design decisions
+
+| Decision | Reason |
+|---|---|
+| `capture_method=MANUAL` | Authorizes the card without charging. Backend controls exactly when funds are captured. 7-day Stripe authorization window is fine for snow-clearing jobs. |
+| Two-event webhook flow (capturable → succeeded) | Stripe fires `amount_capturable_updated` first (auth complete) then `succeeded` after capture. Capturing in the first event and transitioning in the second makes each step idempotent and recoverable. |
+| Idempotency via `stripeEvents/{eventId}` | Stripe delivers events at-least-once. Firestore transaction ensures each event is processed exactly once even under concurrent delivery. |
+| Return 200 for unhandled events | Stripe retries on non-200. We don't want infinite retries for event types we intentionally ignore. |
+| HST included in Transfer amount | Worker is responsible for remitting HST to CRA (if HST-registered). Platform simply passes HST through; only the 15% commission is retained. |
+| Connect Express (not Standard/Custom) | Workers need a simple onboarding flow with Stripe managing KYC. Standard is too complex; Custom would require us to build the full UI. |
+| `refundJob` handles both capturable and captured states | Job could be in PENDING_DEPOSIT (capturable) or COMPLETE/DISPUTED (succeeded). Cancel vs. Refund is the correct Stripe operation for each. |
+
+### Compile error encountered
+PaymentService.refundJob had an unreachable `catch (InterruptedException | ExecutionException)` block — the only Firestore call goes through `jobService.transitionStatus()` which handles those exceptions internally. Removed the dead catch block.
+
+### Verification
+- `mvn compile -q` — BUILD SUCCESS after fix
+- `mvn test -q` — all tests pass
+- Pushed to GitHub — Backend Deploy workflow triggered
+
+**Commit:** `feat: P1-11 + P1-12 Stripe escrow, Connect payouts, and refunds`
+
+**Next task:** P1-13 — Full job state machine (transition-table validation)
