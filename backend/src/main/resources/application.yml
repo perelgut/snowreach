@@ -55,6 +55,9 @@ yosnowmow:
     api-key:    ${SENDGRID_API_KEY:placeholder-set-in-P1-17}
     from-email: noreply@yosnowmow.com
     from-name:  YoSnowMow
+    # BCC address receives a copy of every outgoing email.
+    # Set ADMIN_BCC_EMAIL env var to change or clear it (empty string = disabled).
+    bcc-email:  ${ADMIN_BCC_EMAIL:perelgut@gmail.com}
 
   maps:
     api-key: ${MAPS_API_KEY:placeholder-set-in-P1-07}

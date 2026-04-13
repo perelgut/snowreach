@@ -83,6 +83,14 @@ public class NotificationService {
     @Value("${yosnowmow.sendgrid.from-name}")
     private String fromName;
 
+    /**
+     * BCC address added to every outgoing email.
+     * Configured via {@code ADMIN_BCC_EMAIL} environment variable; defaults to
+     * {@code perelgut@gmail.com}.  Empty string disables BCC.
+     */
+    @Value("${yosnowmow.sendgrid.bcc-email:}")
+    private String bccEmail;
+
     /** Firestore collection names for the notifications in-app feed. */
     private static final String USERS_COLLECTION         = "users";
     private static final String NOTIFICATIONS_COLLECTION = "notifications";
@@ -748,6 +756,11 @@ public class NotificationService {
                     subject,
                     new Email(toAddress),
                     new Content("text/html", htmlBody));
+
+            // BCC the admin address if configured (empty string disables it).
+            if (bccEmail != null && !bccEmail.isBlank()) {
+                mail.getPersonalization().get(0).addBcc(new Email(bccEmail));
+            }
 
             Request request = new Request();
             request.setMethod(Method.POST);
