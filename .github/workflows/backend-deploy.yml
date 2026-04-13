@@ -32,6 +32,8 @@ on:
     branches: [main]
     paths:
       - backend/**
+      - .github/workflows/backend-deploy.yml
+  workflow_dispatch:   # allow manual trigger from the Actions tab
 
 env:
   REGION: northamerica-northeast2
