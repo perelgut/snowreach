@@ -1430,4 +1430,81 @@ With escrow and dispatch working, we need a single authoritative transition meth
 
 **Commit:** `feat: P1-13 + P1-14 job state machine and cancellation with fee`
 
+---
+
+## 2026-04-13 — Session 7 (continued): P1-15 Firebase Storage + P1-16 Ratings
+
+### Context
+
+Session resumed after context window exhausted at the end of Session 6. P1-13 and P1-14 were already committed and pushed successfully. CI/CD was green. The next tasks in sequence are P1-15 (Firebase Storage photo upload) and P1-16 (Ratings and Reviews).
+
+---
+
+## P1-15 — Firebase Storage job completion photo upload
+
+### Problem
+
+Workers need to photograph the completed work so Requesters can verify it and so Admins have evidence in dispute resolution. Photos must be attached to the job document and be viewable later.
+
+### Design decisions
+
+| Decision | Reason |
+|---|---|
+| Firebase Storage download URL, not signed URL | Signed V4 URLs require `iam.serviceAccounts.signBlob` IAM permission on the Cloud Run service account. The Firebase download token approach is simpler, works with ADC out of the box, and is permanent (no expiry to manage). The token is stored as `firebaseStorageDownloadTokens` in the GCS blob metadata — the same mechanism the Firebase JS SDK uses for `getDownloadURL()`. |
+| Bucket name via `${FIREBASE_STORAGE_BUCKET}` env var | Default `yosnowmow-dev.appspot.com` works in dev. Production injects the real bucket via Cloud Run env var. |
+| `StorageClient.getInstance(firebaseApp).bucket(name).getStorage()` | Uses Firebase Admin SDK credentials (ADC in Cloud Run) to get the underlying `google-cloud-storage` `Storage` instance. Consistent with how Firestore access is structured. |
+| Max 5 photos checked in controller, not a Firestore transaction | Phase 1 simplicity. A race window exists if two uploads arrive simultaneously near the 5-photo limit. A Firestore transaction guard is noted as a Phase 2 improvement. |
+| Photos appended to `job.completionImageIds` via `FieldValue.arrayUnion` | Atomic append; safe under concurrent uploads. |
+| MIME check in `StorageService`, photo count check in `StorageController` | Separation of concerns: `StorageService` knows about storage rules; `StorageController` knows about job business rules. |
+
+### Files created / modified
+
+| File | Change |
+|---|---|
+| `resources/application.yml` | Added `yosnowmow.firebase.storage-bucket: ${FIREBASE_STORAGE_BUCKET:yosnowmow-dev.appspot.com}` |
+| `service/StorageService.java` | New. Validates MIME (jpeg/png), size ≤ 10 MB, uploads to Firebase Storage, returns download URL with embedded UUID token. |
+| `controller/StorageController.java` | New. `POST /api/jobs/{jobId}/photos` — worker-only, validates currentWorkerId + status IN_PROGRESS or COMPLETE, enforces max 5 photos, appends URL to `completionImageIds`. Returns `{url, totalPhotos}`. |
+
+---
+
+## P1-16 — Ratings and Reviews with mutual-release trigger
+
+### Problem
+
+After a job is COMPLETE, both parties should be able to rate each other. When both ratings are in, payment should release immediately rather than waiting for the 4-hour auto-release timer. The Worker's average rating on their profile should update with each new Requester rating.
+
+### Bug fixed: DisputeTimerJob missing Stripe payout call
+
+While implementing P1-16, discovered that `DisputeTimerJob` (P1-13) called `jobService.transition(RELEASED)` but did NOT call `paymentService.releasePayment()`. This meant the auto-release timer would move the job to RELEASED status but the Worker would never get paid via Stripe. Fixed by adding `@Autowired PaymentService` to `DisputeTimerJob` and calling `paymentService.releasePayment(jobId)` immediately after the transition.
+
+### Design decisions
+
+| Decision | Reason |
+|---|---|
+| Rating document ID = `{jobId}_{raterRole}` | Makes duplicate detection trivial (existence check on a known document ID). Allows fetching both ratings in one `whereEqualTo("jobId", ...)` query. |
+| `raterRole` determined server-side from caller UID | Callers cannot self-select their role. This prevents a Requester from claiming to be a Worker to submit a second rating. |
+| Ratings allowed at COMPLETE, RELEASED, SETTLED | COMPLETE is the primary window; RELEASED/SETTLED allow late feedback after auto-release without breaking anything (transition is already done). |
+| Worker average rating updated only from Requester ratings | The Worker's public profile rating reflects what Requesters think of their service quality, not what Workers think of Requesters. |
+| Rolling average in Firestore transaction | Prevents race conditions when two Requester ratings arrive simultaneously for the same Worker (different jobs). `Math.round(x * 100.0) / 100.0` avoids floating-point drift. |
+| `checkAndRelease()` swallows `InvalidTransitionException` | If the 4-hour timer fires at the same moment both ratings arrive, one path will succeed (status moves to RELEASED) and the other will get an invalid-transition error. Swallowing it on the ratings path is correct — the payment is already handled. |
+| `RatingService` injects `PaymentService` | No circular dependency. `PaymentService → JobService`; `RatingService → PaymentService, JobService`. All one-way. |
+
+### Files created / modified
+
+| File | Change |
+|---|---|
+| `model/Rating.java` | Replaced single-line stub. Fields: ratingId, jobId, raterUid, rateeUid, raterRole, stars, reviewText, wouldRepeat, createdAt. |
+| `dto/RatingRequest.java` | Replaced single-line stub. `@NotNull @Min(1) @Max(5) Integer stars`, `@Size(max=500) String reviewText`, `@NotNull Boolean wouldRepeat`. |
+| `service/RatingService.java` | Replaced single-line stub. `submitRating()`: validates job status, determines raterRole, duplicate check, writes rating, updates Worker avg, calls `checkAndRelease()` if job COMPLETE. `getRatingsForJob()`: Firestore query by jobId. Private helpers: `checkAndRelease()`, `updateWorkerRating()`. |
+| `controller/RatingController.java` | Replaced single-line stub. `POST /api/jobs/{jobId}/rating` (open to REQUESTER and WORKER), `GET /api/jobs/{jobId}/ratings` (open to all authenticated users). |
+| `scheduler/DisputeTimerJob.java` | Added `@Autowired PaymentService`; added `paymentService.releasePayment(jobId)` call after successful RELEASED transition. |
+
+### Verification
+- All 8 files staged, compiled (implicitly — no Maven errors during development), committed and pushed.
+- Backend Deploy CI triggered on push.
+
+**Commit:** `feat: P1-15 + P1-16 Firebase Storage photo upload and ratings with mutual-release`
+
+**Next task:** P1-17 — SendGrid email notifications
+
 **Next task:** P1-15 — Firebase Storage image upload
