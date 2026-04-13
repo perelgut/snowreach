@@ -258,8 +258,13 @@ public class DispatchService {
     /**
      * Reschedules Quartz timers for PENDING offers that survived a container restart.
      *
-     * Fires once after the Spring context is fully refreshed.  Uses an
-     * {@link AtomicBoolean} to guard against double-execution (Spring fires
+     * Fires once after the Spring context is fully refreshed.  The actual Firestore
+     * query runs in a background daemon thread so that it does not block application
+     * startup — Cloud Run's gRPC TLS negotiation can take several minutes on a cold
+     * start, and a blocking {@code .get().get()} here would delay the "Started" log
+     * line (and the Cloud Run readiness probe) by the same amount.
+     *
+     * Uses an {@link AtomicBoolean} to guard against double-execution (Spring fires
      * {@code ContextRefreshedEvent} for both the root and web application contexts).
      */
     @EventListener(ContextRefreshedEvent.class)
@@ -267,6 +272,18 @@ public class DispatchService {
         if (!recoveryRun.compareAndSet(false, true)) {
             return; // already ran
         }
+        Thread recovery = new Thread(this::runDispatchRecovery, "dispatch-recovery");
+        recovery.setDaemon(true);
+        recovery.start();
+    }
+
+    /**
+     * Body of the startup recovery, executed in the {@code dispatch-recovery} daemon
+     * thread.  Queries Firestore for PENDING jobRequest documents and either
+     * reschedules their Quartz timers (if not yet expired) or handles them as expired
+     * (triggering the next-worker dispatch).
+     */
+    private void runDispatchRecovery() {
         log.info("Recovering in-flight dispatch timers from Firestore…");
         try {
             QuerySnapshot snap = firestore.collection(JOB_REQUESTS_COLLECTION)
