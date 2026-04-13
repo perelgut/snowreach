@@ -1507,4 +1507,75 @@ While implementing P1-16, discovered that `DisputeTimerJob` (P1-13) called `jobS
 
 **Next task:** P1-17 — SendGrid email notifications
 
+---
+
+## 2026-04-13 — Secrets audit and FIREBASE_STORAGE_BUCKET gap fix
+
+### Discussion
+
+User asked: "are we properly updating the SECRETS inside GitHub?" This prompted a full audit of the two-store secret management model used by this project.
+
+### How secret management works in this project
+
+There are two separate secret stores in play:
+
+**GitHub Actions Secrets** (`Settings → Secrets → Actions` in the repo):
+Used by the CI/CD workflow itself to authenticate and push the image.
+- `GOOGLE_CLOUD_SERVICE_ACCOUNT` — GCP service account JSON; used by `google-github-actions/auth@v2`
+- `GOOGLE_CLOUD_PROJECT` — GCP project ID; used to construct the Artifact Registry image URL
+
+**GCP Secret Manager**:
+Injected into the Cloud Run container at runtime via `--set-secrets` in the `gcloud run deploy` command. The Spring Boot app reads these as environment variables.
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_STORAGE_BUCKET` ← **newly added in this session**
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `SENDGRID_API_KEY`
+- `MAPS_API_KEY`
+
+**Frontend GitHub Secrets** (used by `frontend-deploy.yml` build step):
+- `FIREBASE_SERVICE_ACCOUNT`
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
+- `VITE_API_BASE_URL`
+
+### Gap found: FIREBASE_STORAGE_BUCKET missing from deploy command
+
+When `FIREBASE_STORAGE_BUCKET` was added to `application.yml` in P1-15, the `backend-deploy.yml` workflow was not updated simultaneously. The production container would have fallen back to the dev default `yosnowmow-dev.appspot.com`, meaning all Worker photos uploaded in production would go to the wrong bucket.
+
+**Root cause:** the P1-15 commit touched `application.yml` and `StorageService.java` but not `backend-deploy.yml`. There was no automated check enforcing that every new `${ENV_VAR:default}` in the YAML also appears in the deploy command.
+
+**Fix applied:**
+1. Added `--set-secrets FIREBASE_STORAGE_BUCKET=FIREBASE_STORAGE_BUCKET:latest` to the `gcloud run deploy` step in `backend-deploy.yml`.
+2. Updated the comment block at the top of `backend-deploy.yml` to list `FIREBASE_STORAGE_BUCKET` among the required GCP Secret Manager secrets.
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `.github/workflows/backend-deploy.yml` | Added `--set-secrets FIREBASE_STORAGE_BUCKET=FIREBASE_STORAGE_BUCKET:latest` to the deploy step. Updated comment block to document the new secret. |
+
+### Manual action required by the developer
+
+The GCP Secret Manager secret itself does not exist yet — it must be created manually before the next backend deploy that uses Storage will work correctly:
+
+```bash
+echo -n "yosnowmow-prod.appspot.com" | \
+  gcloud secrets create FIREBASE_STORAGE_BUCKET \
+    --data-file=- \
+    --project=YOUR_PROJECT_ID
+```
+
+(Replace the bucket name with the real value from Firebase console → Storage.)
+
+### Standing rule established
+
+**Every time a new `${ENV_VAR:default}` is added to `application.yml`, the `backend-deploy.yml` workflow must be updated in the same commit.** This is now a documented invariant of the project.
+
+**Commit:** `fix: add FIREBASE_STORAGE_BUCKET to Cloud Run --set-secrets (P1-15 gap)`
+
 **Next task:** P1-15 — Firebase Storage image upload
