@@ -1985,8 +1985,75 @@ onSnapshot(feedRef, (snapshot) => { /* update notification bell */ });
 |---|---|
 | P1-17 — SendGrid email notifications | **Complete** |
 | P1-18 — Firebase FCM push notifications | **Complete** |
-| P1-19 — Admin dashboard live data | Not started |
+| P1-19 — Admin dashboard live data | **Complete** |
 | P1-20 — Audit log hash chain verification | Not started |
 | P1-21 — Firestore security rules | Not started |
 | P1-22 — Integration test suite | Not started |
 | P1-23 — Production deployment | Not started |
+
+---
+
+## Session 10 — 2026-04-13
+
+### P1-19 — Admin Dashboard Wired to Live Data (completion)
+
+Completed the final piece of P1-19: `JobDetail.jsx` rewrite and `api.js` additions.
+
+**Context:**
+P1-19 began in Session 9. The backend was fully implemented (AdminController with 6 endpoints, 3 DTOs, AdminStatsResponse/PagedResponse/OverrideStatusRequest), `api.js` was rewritten with an Axios client and all admin/job/user API methods, and `Dashboard.jsx` was fully rewritten. Session 9 ended before `JobDetail.jsx` was updated.
+
+**`JobDetail.jsx` — full rewrite** (`frontend/src/pages/admin/JobDetail.jsx`):
+
+The mock version used `useMock()` to find a job in the in-memory array and referenced Phase 0 mock field names (`job.address`, `job.serviceTypes`, `job.depositAmountCents`, `job.netWorkerCents`, etc.). The new version:
+
+1. **Removes `useMock()` entirely.** Job data comes from `getJob(id)` via the real backend. Requester and worker profiles are fetched with `getUser()` in parallel.
+
+2. **Field name corrections** — all references updated to the real Spring model:
+
+| Old (Phase 0 mock) | New (real backend) |
+|---|---|
+| `job.address` | `job.propertyAddress?.fullText` |
+| `job.serviceTypes.join(', ')` | `(job.scope \|\| []).join(', ')` |
+| `job.scheduledTime` | `fmtWindow(job.startWindowEarliest, job.startWindowLatest)` |
+| `job.specialNotes` | `job.notesForWorker` |
+| `job.depositAmountCents` (cents) | `job.totalAmountCAD` (CAD) |
+| `job.hstCents` (cents) | `job.hstAmountCAD` (CAD) |
+| `job.platformFeeCents` (cents) | `job.tierPriceCAD * job.commissionRateApplied` |
+| `job.netWorkerCents` (cents) | `job.workerPayoutCAD` (CAD) |
+| `mockUser.displayName` | `requester.name` (from `getUser()`) |
+| `mockWorker.displayName` | `worker.name` (from `getUser()`) |
+| `mockWorker.averageRating` | `worker.worker?.rating` |
+| `mockWorker.totalJobsCompleted` | `worker.worker?.completedJobCount` |
+
+3. **All 3 admin action buttons wired to real API:**
+   - Override status → `overrideJobStatus(id, targetStatus, reason)` — the override modal now includes a mandatory reason textarea (required by the backend `@NotBlank` validation)
+   - Force Release → `releasePayment(id)`
+   - Issue Refund → `refundJob(id)`
+   - Dispute resolution → `releasePayment(id)` (release/split) or `refundJob(id)` (refund)
+
+4. **Loading / error states** — page shows "Loading job…" spinner text while fetching; shows error message with back link if the API call fails; handles user-profile fetch failures silently (falls back to showing the raw UID).
+
+5. **Real dispute fields** — reads `job.disputeReason`, `job.disputeDescription`, `job.disputeWorkerNotes`, `job.disputeInitiatedAt` from the Firestore document. The mock hardcoded `MOCK_DISPUTE` object is removed.
+
+6. **Action feedback** — `actionPending` flag disables buttons during in-flight API calls and shows inline "Applying…" / "Releasing…" / "Refunding…" labels. Global action error banner shown on failure.
+
+7. **`AccountStatusBadge` sub-component** — renders coloured badge for active (green) / suspended (amber) / banned (red) account status.
+
+8. **`advanceJob` removed** — this was mock-only; there is no equivalent admin endpoint.
+
+9. **Financials null-safe** — the pricing fields on a job are null until a worker accepts. The Financials card shows "Pricing is locked once a Worker accepts the job" when `totalAmountCAD == null`.
+
+10. **Admin notes panel retained** with a prominent "Local only — notes API wires in P2-01" label.
+
+**`api.js` — added `updateFcmToken`** (`frontend/src/services/api.js`):
+```javascript
+export const updateFcmToken = (userId, fcmToken) =>
+  api.patch(`/api/users/${userId}/fcm-token`, { fcmToken })
+```
+This was omitted in Session 9 when P1-18 was implemented. The React client should call this after login and when the browser grants notification permission.
+
+**`fmtTs` / `fmtWindow` helpers** — Firestore Timestamp serialises from the backend as `{seconds, nanos}`. The `tsToDate()` helper reads `ts.seconds ?? ts._seconds ?? 0` (tolerates both official and alternate SDK shapes). `fmtTs()` uses `en-CA` locale formatting. `fmtWindow()` formats the `startWindowEarliest`/`startWindowLatest` pair, defaulting to "ASAP" when no window is set.
+
+**Build verification:** `npm run build` passed (123 modules, 567ms, 0 errors).
+
+**Commit:** P1-19 implementation committed to `main`.
