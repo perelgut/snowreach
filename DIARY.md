@@ -1253,3 +1253,58 @@ P1-07 gave us geocoding. P1-08 uses it: the Requester posts a job, the address i
 **Commit:** `feat: P1-08 Job posting API`
 
 **Next task:** P1-09 — Worker matching algorithm (filter by service area, rank by rating then distance)
+
+---
+
+## 2026-04-13 — CI/CD Debug: Backend Deploy Workflow (6 successive fixes)
+
+### Context
+After pushing P1-05 through P1-08, the Backend Deploy GitHub Actions workflow (#12 and subsequent runs) failed on every attempt. This session diagnosed and fixed six successive root causes, each hidden by the previous one.
+
+### Failure 1 — Cloud Build log-streaming permission
+**Error:** `This tool can only stream logs if you are Viewer/Owner of the project`
+**Root cause:** Workflow used `gcloud builds submit`, which requires the service account to have Cloud Build log-streaming access (effectively Viewer/Owner on the project).
+**Fix:** Replaced `gcloud builds submit` with `docker build` (on the runner) + `docker push` + `gcloud run deploy`. Added `setup-java@v4` for JDK 21. Added `workflow_dispatch` trigger and `.github/workflows/backend-deploy.yml` to the `paths` filter so workflow file changes also trigger a run.
+
+### Failure 2 — Artifact Registry push permission denied
+**Error:** `Permission 'artifactregistry.repositories.uploadArtifacts' denied on resource`
+**Root cause:** The `github-actions-deploy` service account lacked `roles/artifactregistry.writer` on the project.
+**Fix:** `gcloud projects add-iam-policy-binding yosnowmow-dev --member="serviceAccount:github-actions-deploy@yosnowmow-dev.iam.gserviceaccount.com" --role="roles/artifactregistry.writer"` (run manually in Cloud Shell).
+
+### Failure 3 — Secret Manager permission denied on Cloud Run revision
+**Error:** `Permission denied on secret FIREBASE_PROJECT_ID/... for Revision service account 463057570685-compute@developer.gserviceaccount.com`
+**Root cause:** The default Compute Engine service account used by Cloud Run revisions lacked `roles/secretmanager.secretAccessor`.
+**Fix:** `gcloud projects add-iam-policy-binding yosnowmow-dev --member="serviceAccount:463057570685-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"` (run manually).
+
+### Failure 4 — FIREBASE_SERVICE_ACCOUNT_PATH file not found in container
+**Error:** `FirebaseApp: /secrets/yosnowmow-dev-sa.json (No such file or directory)`
+**Root cause:** `FIREBASE_SERVICE_ACCOUNT_PATH` secret in Secret Manager contained a file path string. When injected as an env var into Cloud Run, `FirebaseConfig.buildCredentials()` tried to open that path, which doesn't exist inside the container.
+**Fix:** Removed `--set-secrets FIREBASE_SERVICE_ACCOUNT_PATH=FIREBASE_SERVICE_ACCOUNT_PATH:latest` from the deploy step. `FirebaseConfig` already falls back to Application Default Credentials (ADC) when the path is blank, and Cloud Run provides ADC automatically via the revision's service account identity.
+
+### Failure 5 — gRPC transport missing (Firestore can't connect)
+**Error:** `io.grpc.ManagedChannelProvider$ProviderNotFoundException: No functional channel service provider found. Try adding a dependency on the grpc-okhttp, grpc-netty, or grpc-netty-shaded artifact`
+**Root cause:** `pom.xml` had an incorrect `<exclusion>` of `grpc-netty-shaded` from the `firebase-admin` dependency, with the comment "Spring Boot uses its own HTTP client." This was wrong: Firestore Admin SDK communicates via gRPC, not HTTP/1.1. Removing the transport JAR from the classpath caused a `ProviderNotFoundException` at startup.
+**Fix:** Removed the `<exclusions>` block from the `firebase-admin` dependency in `pom.xml`. Added a corrective comment explaining that `grpc-netty-shaded` must NOT be excluded.
+**Commit:** `fix: remove grpc-netty-shaded exclusion — Firestore uses gRPC not HTTP`
+
+### Failure 6 — Wrong Spring profile: Tomcat on port 8081, Firestore emulator active
+**Error:** Cloud Run startup probe (TCP on port 8080) reported `DEADLINE_EXCEEDED` after 5 minutes; revision rolled back.
+**Root cause (from Cloud Run logs):** 
+- `Tomcat started on port 8081` — the `dev` profile overrides `server.port` to 8081 to avoid colliding with the local Firestore emulator (which also uses 8080 locally).
+- `Firebase emulator mode enabled — routing Firestore to localhost:8080` — `dev` profile enables the emulator.
+- Cloud Run injects `PORT=8080` and health-checks that port. With Tomcat on 8081, the probe always times out.
+**Root cause (config):** `application.yml` defaults `spring.profiles.active` to `${SPRING_PROFILE:dev}`. The Cloud Run revision had no `SPRING_PROFILE` env var, so the `dev` profile activated.
+**Fix:** Added `--set-env-vars SPRING_PROFILE=prod` to the `gcloud run deploy` step in the workflow. The `prod` profile keeps Tomcat on 8080, disables the emulator, and uses ADC — correct for Cloud Run.
+**Commit:** `fix: set SPRING_PROFILE=prod in Cloud Run deploy — dev profile caused wrong port`
+
+### Outcome
+Run #14 — **SUCCESS**. The backend API is live on Cloud Run (`northamerica-northeast2`). All six layers of failure have been resolved.
+
+### Lessons
+1. Always verify the correct gRPC transport is present when using Firestore Admin SDK.
+2. Never exclude `grpc-netty-shaded` from `firebase-admin` — it is the gRPC transport, not a redundant HTTP lib.
+3. Cloud Run env vars must explicitly activate the production Spring profile; never rely on defaults.
+4. Separate the dev port (8081) from the production port (8080) in profile YMLs is correct; the missing piece was ensuring Cloud Run knows which profile to use.
+5. ADC is the correct credential strategy for Cloud Run — no service account JSON file needed or wanted.
+
+**Next task:** P1-09 — Worker matching algorithm (filter by service area, rank by rating then distance)
