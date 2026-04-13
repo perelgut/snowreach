@@ -65,6 +65,15 @@ public class User {
 
     private Timestamp phoneVerifiedAt;
 
+    // ── Push notifications ────────────────────────────────────────────────────
+
+    /**
+     * Firebase Cloud Messaging device token for push notifications.
+     * Set by the React client via PATCH /api/users/{uid}/fcm-token after login.
+     * Null if the user has never granted notification permission or cleared the token.
+     */
+    private String fcmToken;
+
     // ── Geography ────────────────────────────────────────────────────────────
 
     /** Zone identifier if the user's address is within a launch zone; null otherwise. */
@@ -133,6 +142,9 @@ public class User {
 
     public Timestamp getPhoneVerifiedAt() { return phoneVerifiedAt; }
     public void setPhoneVerifiedAt(Timestamp phoneVerifiedAt) { this.phoneVerifiedAt = phoneVerifiedAt; }
+
+    public String getFcmToken() { return fcmToken; }
+    public void setFcmToken(String fcmToken) { this.fcmToken = fcmToken; }
 
     public String getLaunchZoneId() { return launchZoneId; }
     public void setLaunchZoneId(String launchZoneId) { this.launchZoneId = launchZoneId; }

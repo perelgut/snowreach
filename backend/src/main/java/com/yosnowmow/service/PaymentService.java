@@ -495,8 +495,10 @@ public class PaymentService {
             log.info("Transfer {} ({} ¢ CAD) released to worker {} for job {}",
                     transfer.getId(), payoutCents, job.getWorkerId(), jobId);
 
-            // Notify the Worker that their payout has been sent (P1-17).
+            // Notify the Worker that their payout has been sent (P1-17/P1-18).
             notificationService.sendPayoutReleasedEmail(
+                    job.getWorkerId(), payoutCents / 100.0, jobId);
+            notificationService.notifyPayoutReleased(
                     job.getWorkerId(), payoutCents / 100.0, jobId);
 
         } catch (ResponseStatusException e) {

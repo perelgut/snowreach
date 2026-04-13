@@ -484,6 +484,10 @@ public class JobService {
         double feeCAD = feeCharged ? 11.30 : 0.0;
         notificationService.sendCancellationEmail(
                 job.getRequesterId(), job.getWorkerId(), feeCharged, feeCAD, jobId);
+        notificationService.notifyCancellation(job.getRequesterId(), jobId, feeCharged);
+        if (job.getWorkerId() != null) {
+            notificationService.notifyCancellation(job.getWorkerId(), jobId, false);
+        }
 
         return previousStatus;
     }
@@ -645,10 +649,17 @@ public class JobService {
         }
         try {
             Job job = getJob(jobId);
+            String address = job.getPropertyAddress() != null
+                    ? job.getPropertyAddress().getFullText() : "the property";
+
             if ("IN_PROGRESS".equals(toStatus)) {
                 notificationService.sendJobInProgressEmail(job.getRequesterId(), job);
+                notificationService.notifyWorkerArrived(job.getRequesterId(), jobId, address);
             } else {
                 notificationService.sendJobCompleteEmail(job.getRequesterId(), job.getWorkerId(), job);
+                notificationService.notifyJobCompleteRequester(job.getRequesterId(), jobId);
+                double payoutCAD = job.getWorkerPayoutCAD() != null ? job.getWorkerPayoutCAD() : 0.0;
+                notificationService.notifyJobCompleteWorker(job.getWorkerId(), jobId, payoutCAD);
             }
         } catch (Exception e) {
             log.error("Failed to send transition notification for job {} → {}: {}",

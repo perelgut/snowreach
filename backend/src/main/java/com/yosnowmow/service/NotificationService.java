@@ -12,7 +12,13 @@ package com.yosnowmow.service;
 // Until domain verification is complete, emails may land in spam or bounce.
 // ============================================================
 
+import com.google.cloud.Timestamp;
+import com.google.cloud.firestore.Firestore;
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.messaging.FirebaseMessaging;
+import com.google.firebase.messaging.FirebaseMessagingException;
+import com.google.firebase.messaging.Message;
+import com.google.firebase.messaging.Notification;
 import com.sendgrid.Method;
 import com.sendgrid.Request;
 import com.sendgrid.Response;
@@ -28,6 +34,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * Sends transactional emails via SendGrid (P1-17) and push notifications via
@@ -73,11 +83,22 @@ public class NotificationService {
     @Value("${yosnowmow.sendgrid.from-name}")
     private String fromName;
 
-    private final FirebaseAuth firebaseAuth;
+    /** Firestore collection names for the notifications in-app feed. */
+    private static final String USERS_COLLECTION         = "users";
+    private static final String NOTIFICATIONS_COLLECTION = "notifications";
+    private static final String FEED_COLLECTION          = "feed";
+
+    private final FirebaseAuth       firebaseAuth;
+    private final FirebaseMessaging  firebaseMessaging;
+    private final Firestore          firestore;
     private SendGrid sendGridClient;
 
-    public NotificationService(FirebaseAuth firebaseAuth) {
-        this.firebaseAuth = firebaseAuth;
+    public NotificationService(FirebaseAuth firebaseAuth,
+                               FirebaseMessaging firebaseMessaging,
+                               Firestore firestore) {
+        this.firebaseAuth      = firebaseAuth;
+        this.firebaseMessaging = firebaseMessaging;
+        this.firestore         = firestore;
     }
 
     @PostConstruct
@@ -85,24 +106,29 @@ public class NotificationService {
         sendGridClient = new SendGrid(sendgridApiKey);
     }
 
-    // ── Stub push-notification methods (wired in P1-18) ───────────────────────
+    // ── P1-18 push-notification methods ──────────────────────────────────────
 
     /**
      * Sends a job-offer push notification to a Worker.
-     * TODO P1-18: wire to Firebase Cloud Messaging.
+     * Called by {@code DispatchService} when a new job request is sent to a Worker.
      *
-     * @param workerUid Firebase UID of the Worker
-     * @param jobId     Firestore job document ID
+     * @param workerUid  Firebase UID of the Worker
+     * @param jobId      Firestore job document ID
+     * @param address    human-readable property address
+     * @param payoutCAD  estimated Worker payout in CAD
      */
     @Async
-    public void sendJobRequest(String workerUid, String jobId) {
-        log.debug("TODO P1-18 — sendJobRequest push: worker={} job={}", workerUid, jobId);
+    public void sendJobRequest(String workerUid, String jobId,
+                               String address, double payoutCAD) {
+        sendPush(workerUid, "JOB_REQUEST",
+                "New snow-clearing job nearby",
+                String.format("Job at %s — Est. payout %s. Tap to review.", address, formatCad(payoutCAD)),
+                Map.of("jobId", jobId));
     }
 
     /**
-     * Notifies a Requester that a Worker has accepted their job.
-     * Full email confirmation is sent by {@link #sendJobConfirmedEmail} once payment clears;
-     * this immediate notification can be wired to a push in P1-18.
+     * Notifies a Requester (push + email) that a Worker has accepted their job.
+     * The email prompts payment; the push provides an immediate alert.
      *
      * @param requesterId Firebase UID of the Requester
      * @param jobId       Firestore job document ID
@@ -110,16 +136,183 @@ public class NotificationService {
      */
     @Async
     public void notifyRequesterJobAccepted(String requesterId, String jobId, String workerId) {
+        // Email
         String email = lookupEmail(requesterId);
-        if (email == null) return;
-        sendEmail(email, "A worker accepted your YoSnowMow job — complete payment to confirm",
-                buildHtml("Worker Accepted", """
-                        <p>Great news — a worker has accepted your snow-clearing job.</p>
-                        <p>Your job is now in <strong>Pending Deposit</strong> status.
-                        Please log in and complete your payment within 30 minutes to confirm
-                        the booking before it expires.</p>
-                        <p>Job ID: <strong>%s</strong></p>
-                        """.formatted(jobId)));
+        if (email != null) {
+            sendEmail(email, "A worker accepted your YoSnowMow job — complete payment to confirm",
+                    buildHtml("Worker Accepted", """
+                            <p>Great news — a worker has accepted your snow-clearing job.</p>
+                            <p>Your job is now in <strong>Pending Deposit</strong> status.
+                            Please log in and complete your payment within 30 minutes to confirm
+                            the booking before it expires.</p>
+                            <p>Job ID: <strong>%s</strong></p>
+                            """.formatted(jobId)));
+        }
+        // Push
+        sendPush(requesterId, "JOB_ACCEPTED",
+                "Worker accepted — complete payment",
+                "A worker is ready. Complete your payment within 30 minutes to confirm.",
+                Map.of("jobId", jobId));
+    }
+
+    /**
+     * Notifies both Requester and Worker (push) that the job is confirmed and payment cleared.
+     * The full confirmation email is handled separately by {@link #sendJobConfirmedEmail}.
+     *
+     * @param requesterId Firebase UID of the Requester
+     * @param workerId    Firebase UID of the Worker
+     * @param jobId       Firestore job document ID
+     * @param address     human-readable property address
+     */
+    @Async
+    public void notifyJobConfirmed(String requesterId, String workerId,
+                                   String jobId, String address) {
+        sendPush(requesterId, "JOB_CONFIRMED",
+                "Your job is confirmed!",
+                "Payment received. Your worker will head to " + address + " shortly.",
+                Map.of("jobId", jobId));
+        sendPush(workerId, "JOB_CONFIRMED",
+                "Job confirmed — head to " + address,
+                "Payment cleared. Mark the job as In Progress when you arrive.",
+                Map.of("jobId", jobId));
+    }
+
+    /**
+     * Notifies the Requester (push) that the Worker has arrived and started.
+     * The in-progress email is handled separately by {@link #sendJobInProgressEmail}.
+     *
+     * @param requesterId Firebase UID of the Requester
+     * @param jobId       Firestore job document ID
+     * @param address     human-readable property address
+     */
+    @Async
+    public void notifyWorkerArrived(String requesterId, String jobId, String address) {
+        sendPush(requesterId, "WORKER_ARRIVED",
+                "Your worker has arrived!",
+                "Snow clearing is now in progress at " + address + ".",
+                Map.of("jobId", jobId));
+    }
+
+    /**
+     * Notifies the Requester (push) that their job is complete.
+     * Also prompts them to rate the worker.
+     *
+     * @param requesterId Firebase UID of the Requester
+     * @param jobId       Firestore job document ID
+     */
+    @Async
+    public void notifyJobCompleteRequester(String requesterId, String jobId) {
+        sendPush(requesterId, "JOB_COMPLETE",
+                "Job complete — please rate your worker",
+                "Your driveway is cleared! Tap to rate and release payment.",
+                Map.of("jobId", jobId));
+    }
+
+    /**
+     * Notifies the Worker (push) that the job is complete and their payout is pending.
+     *
+     * @param workerId  Firebase UID of the Worker
+     * @param jobId     Firestore job document ID
+     * @param payoutCAD Worker payout amount in CAD
+     */
+    @Async
+    public void notifyJobCompleteWorker(String workerId, String jobId, double payoutCAD) {
+        sendPush(workerId, "JOB_COMPLETE",
+                "Job marked complete",
+                String.format("Your payout of %s is pending release. Please rate your requester.",
+                        formatCad(payoutCAD)),
+                Map.of("jobId", jobId));
+    }
+
+    /**
+     * Prompts a user (push) to submit a rating.
+     * Called after COMPLETE when a rating reminder is due.
+     *
+     * @param uid   Firebase UID of the user to remind
+     * @param jobId Firestore job document ID
+     */
+    @Async
+    public void notifyRatingRequest(String uid, String jobId) {
+        sendPush(uid, "RATING_REQUEST",
+                "Please rate your experience",
+                "Your rating helps the YoSnowMow community. Tap to submit.",
+                Map.of("jobId", jobId));
+    }
+
+    /**
+     * Notifies the Worker (push) that their Stripe payout has been released.
+     * The payout email is handled separately by {@link #sendPayoutReleasedEmail}.
+     *
+     * @param workerId  Firebase UID of the Worker
+     * @param payoutCAD payout amount in CAD
+     * @param jobId     Firestore job document ID
+     */
+    @Async
+    public void notifyPayoutReleased(String workerId, double payoutCAD, String jobId) {
+        sendPush(workerId, "PAYOUT_RELEASED",
+                "Your payout has been released",
+                String.format("%s is on its way to your Stripe account (2–3 business days).",
+                        formatCad(payoutCAD)),
+                Map.of("jobId", jobId));
+    }
+
+    /**
+     * Notifies a user (push) that a dispute has been opened on their job.
+     * Call once for the Requester and once for the Worker.
+     *
+     * @param uid   Firebase UID of the user to notify
+     * @param jobId Firestore job document ID
+     * @param role  "requester" or "worker" (used to tailor the message)
+     */
+    @Async
+    public void notifyDisputeOpened(String uid, String jobId, String role) {
+        String body = "requester".equals(role)
+                ? "Your dispute has been received. An admin will review it within 1–2 business days."
+                : "A dispute has been filed on job " + jobId + ". An admin will contact you.";
+        sendPush(uid, "DISPUTE_OPENED",
+                "Dispute opened — Job " + jobId,
+                body,
+                Map.of("jobId", jobId));
+    }
+
+    /**
+     * Notifies a user (push) of the dispute resolution outcome.
+     * Call once for the Requester and once for the Worker.
+     *
+     * @param uid        Firebase UID of the user to notify
+     * @param jobId      Firestore job document ID
+     * @param resolution "release" | "refund" | "split"
+     */
+    @Async
+    public void notifyDisputeResolved(String uid, String jobId, String resolution) {
+        String body = switch (resolution.toLowerCase()) {
+            case "refund" -> "Dispute resolved: a full refund has been issued.";
+            case "split"  -> "Dispute resolved: a partial refund/payout split has been applied.";
+            default       -> "Dispute resolved: payment has been released to the worker.";
+        };
+        sendPush(uid, "DISPUTE_RESOLVED",
+                "Dispute resolved — Job " + jobId,
+                body,
+                Map.of("jobId", jobId));
+    }
+
+    /**
+     * Notifies a user (push) that a job has been cancelled.
+     * Call once for the Requester and (if assigned) once for the Worker.
+     *
+     * @param uid        Firebase UID of the user to notify
+     * @param jobId      Firestore job document ID
+     * @param feeCharged true if the $10 cancellation fee applies (Requester only)
+     */
+    @Async
+    public void notifyCancellation(String uid, String jobId, boolean feeCharged) {
+        String body = feeCharged
+                ? "Your job has been cancelled. A $10.00 cancellation fee was applied."
+                : "Your job has been cancelled. No fee was charged.";
+        sendPush(uid, "JOB_CANCELLED",
+                "Job cancelled",
+                body,
+                Map.of("jobId", jobId));
     }
 
     // ── P1-17 email methods ───────────────────────────────────────────────────
@@ -452,6 +645,78 @@ public class NotificationService {
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /**
+     * Sends a push notification via Firebase Cloud Messaging and writes the
+     * notification to the user's in-app feed regardless of FCM token availability.
+     *
+     * <p>Flow:
+     * <ol>
+     *   <li>Read the user's {@code fcmToken} from Firestore.</li>
+     *   <li>If a token is present, send an FCM message.</li>
+     *   <li>Write a notification document to {@code notifications/{uid}/feed/{uuid}}
+     *       so the React client can show an in-app notification bell.</li>
+     * </ol>
+     *
+     * <p>All failures are logged and swallowed — push failures must never
+     * propagate to the caller.
+     *
+     * @param uid       Firebase UID of the recipient
+     * @param type      notification type string (e.g. "JOB_CONFIRMED")
+     * @param title     push notification title
+     * @param body      push notification body
+     * @param data      additional key-value data for the client (e.g. {@code jobId})
+     */
+    private void sendPush(String uid, String type, String title, String body,
+                          Map<String, String> data) {
+        try {
+            // 1. Read FCM token from Firestore user doc.
+            com.google.cloud.firestore.DocumentSnapshot userDoc = firestore
+                    .collection(USERS_COLLECTION).document(uid).get().get();
+            String fcmToken = userDoc.getString("fcmToken");
+
+            // 2. Send FCM push if a device token is registered.
+            if (fcmToken != null && !fcmToken.isBlank()) {
+                Message message = Message.builder()
+                        .setToken(fcmToken)
+                        .setNotification(Notification.builder()
+                                .setTitle(title)
+                                .setBody(body)
+                                .build())
+                        .putAllData(data != null ? data : Map.of())
+                        .build();
+
+                String messageId = firebaseMessaging.send(message);
+                log.debug("FCM sent to uid={} type={} messageId={}", uid, type, messageId);
+            } else {
+                log.debug("No FCM token for uid={} — skipping push for type={}", uid, type);
+            }
+
+            // 3. Write to in-app notification feed (always written, even without FCM).
+            String notifId = UUID.randomUUID().toString();
+            Map<String, Object> notif = new HashMap<>();
+            notif.put("notifId",   notifId);
+            notif.put("type",      type);
+            notif.put("title",     title);
+            notif.put("body",      body);
+            notif.put("data",      data != null ? data : Map.of());
+            notif.put("isRead",    false);
+            notif.put("createdAt", Timestamp.now());
+
+            firestore.collection(NOTIFICATIONS_COLLECTION)
+                    .document(uid)
+                    .collection(FEED_COLLECTION)
+                    .document(notifId)
+                    .set(notif)
+                    .get();
+
+        } catch (FirebaseMessagingException e) {
+            // FCM token may be stale or revoked — log and continue.
+            log.warn("FCM send failed for uid={} type={}: {}", uid, type, e.getMessage());
+        } catch (Exception e) {
+            log.error("sendPush failed for uid={} type={}: {}", uid, type, e.getMessage(), e);
+        }
+    }
 
     /**
      * Looks up a user's email from Firebase Auth (the authoritative source).

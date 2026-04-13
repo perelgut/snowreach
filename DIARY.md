@@ -1873,12 +1873,118 @@ Private helpers: `lookupEmail(uid)`, `sendEmail(to, subject, html)`, `buildHtml(
 4. Add DMARC record: `_dmarc.yosnowmow.com TXT "v=DMARC1; p=none; rua=mailto:dmarc@yosnowmow.com"`
 5. Verify domain in SendGrid before going to production
 
+---
+
+## 2026-04-13 — Session 9 continued: P1-18 Firebase FCM Push Notifications
+
+### P1-18 — Firebase FCM Push Notifications
+
+**Design decisions:**
+- Every push method is `@Async` and exception-safe — push failures never propagate to the caller.
+- A single private `sendPush(uid, type, title, body, data)` helper handles all FCM sends AND the in-app notification feed write. The in-app feed write happens regardless of whether the user has an FCM token, so the notification bell in the React app always works even if push is not enabled.
+- FCM token is stored on `users/{uid}.fcmToken`. A null/blank token skips the FCM send but still writes to the feed.
+- The React client subscribes to `notifications/{uid}/feed` in real-time via the Firestore client SDK — no polling needed.
+- `FirebaseMessaging` added as a Spring bean in `FirebaseConfig.java` (alongside the existing `FirebaseAuth` bean).
+
+**Firestore schema — notification feed:**
+```
+notifications/{uid}/feed/{notifId}: {
+    notifId:   String,
+    type:      String  (e.g. "JOB_CONFIRMED", "JOB_CANCELLED"),
+    title:     String,
+    body:      String,
+    data:      Map<String, String>  (always includes "jobId"),
+    isRead:    Boolean,
+    createdAt: Timestamp
+}
+```
+
+**Files changed:**
+
+`backend/src/main/java/com/yosnowmow/config/FirebaseConfig.java`:
+- Added `import com.google.firebase.messaging.FirebaseMessaging`
+- Added `@Bean FirebaseMessaging firebaseMessaging(FirebaseApp)` — mirrors the `FirebaseAuth` bean pattern
+
+`backend/src/main/java/com/yosnowmow/model/User.java`:
+- Added `fcmToken` field (String, nullable) with getter/setter
+- Stored at `users/{uid}.fcmToken`; updated by the React client via `PATCH /api/users/{uid}/fcm-token`
+
+`backend/src/main/java/com/yosnowmow/dto/FcmTokenRequest.java`:
+- New DTO for `PATCH /api/users/{uid}/fcm-token` — single `fcmToken` String field with `@Size(max=256)`
+
+`backend/src/main/java/com/yosnowmow/service/NotificationService.java`:
+- Added `FirebaseMessaging`, `Firestore` fields and constructor parameters
+- Added private `sendPush()` helper — reads FCM token from Firestore, sends FCM if present, always writes to notification feed
+- Replaced 2-arg `sendJobRequest(workerUid, jobId)` stub with 4-arg real implementation: `sendJobRequest(workerUid, jobId, address, payoutCAD)`
+- Updated `notifyRequesterJobAccepted()` to also send a push alongside the existing email
+- Added 10 new typed push methods:
+  - `notifyJobConfirmed(requesterId, workerId, jobId, address)` — both parties
+  - `notifyWorkerArrived(requesterId, jobId, address)`
+  - `notifyJobCompleteRequester(requesterId, jobId)`
+  - `notifyJobCompleteWorker(workerId, jobId, payoutCAD)`
+  - `notifyRatingRequest(uid, jobId)` — wired when ratings are implemented
+  - `notifyPayoutReleased(workerId, payoutCAD, jobId)`
+  - `notifyDisputeOpened(uid, jobId, role)` — call once per party
+  - `notifyDisputeResolved(uid, jobId, resolution)` — call once per party
+  - `notifyCancellation(uid, jobId, feeCharged)` — call once per party
+
+`backend/src/main/java/com/yosnowmow/service/DispatchService.java`:
+- Updated `sendOffer()` to accept the full `Job` object as a 3rd parameter (was: `sendOffer(jobId, workerId)` → `sendOffer(jobId, workerId, job)`)
+- Extracts `address` and `payoutCAD` from `job` to pass to `notificationService.sendJobRequest()`
+- Updated call site at `dispatchToNextWorker()` to pass the already-fetched `job`
+
+`backend/src/main/java/com/yosnowmow/service/JobService.java`:
+- Updated `notifyTransition()` to call push methods alongside email methods:
+  - `IN_PROGRESS` → `notifyWorkerArrived(requesterId, jobId, address)`
+  - `COMPLETE` → `notifyJobCompleteRequester(requesterId, jobId)` + `notifyJobCompleteWorker(workerId, jobId, payoutCAD)`
+- Updated `cancelJob()` to send push to requester and (if assigned) worker
+
+`backend/src/main/java/com/yosnowmow/controller/WebhookController.java`:
+- Added `notifyJobConfirmed(requesterId, workerId, jobId, address)` call in `handlePaymentSucceeded()` alongside the existing email
+
+`backend/src/main/java/com/yosnowmow/service/PaymentService.java`:
+- Added `notifyPayoutReleased(workerId, payoutCAD, jobId)` call in `releasePayment()` alongside the existing email
+
+`backend/src/main/java/com/yosnowmow/controller/UserController.java`:
+- Added `PATCH /api/users/{uid}/fcm-token` endpoint — calls `userService.updateFcmToken()`
+- Returns HTTP 204 No Content on success
+
+`backend/src/main/java/com/yosnowmow/service/UserService.java`:
+- Added `updateFcmToken(userId, fcmToken)` method — writes `fcmToken` field + `updatedAt` to Firestore
+
+**Build verification:** `mvn compile` passed (62 source files, no errors) after fixing a `sendJobRequest` signature mismatch that emerged because `DispatchService` was calling the old 2-arg stub.
+
+**Call sites NOT yet wired (deferred to P2-01 dispute implementation):**
+- `notifyDisputeOpened` — wires in `DisputeService.openDispute()`
+- `notifyDisputeResolved` — wires in `DisputeService.resolveDispute()`
+- `notifyRatingRequest` — wires when the ratings API is implemented
+
+**React client integration (TODO for frontend phase):**
+```javascript
+// After login, get FCM token and register it:
+import { getMessaging, getToken } from "firebase/messaging";
+const messaging = getMessaging();
+const token = await getToken(messaging, { vapidKey: "YOUR_VAPID_KEY" });
+await api.patch(`/api/users/${uid}/fcm-token`, { fcmToken: token });
+
+// Subscribe to real-time notification feed:
+import { collection, onSnapshot } from "firebase/firestore";
+const feedRef = collection(db, "notifications", uid, "feed");
+onSnapshot(feedRef, (snapshot) => { /* update notification bell */ });
+```
+
+**Pre-production checklist for FCM:**
+1. Enable Firebase Cloud Messaging in the Firebase project console
+2. Generate VAPID key in Project Settings → Cloud Messaging → Web Push certificates
+3. Add `NEXT_PUBLIC_FIREBASE_VAPID_KEY` to the frontend environment
+4. Register Service Worker (`firebase-messaging-sw.js`) in the React app for background push
+
 ### Phase 1 remaining tasks (updated)
 
 | Task | Status |
 |---|---|
 | P1-17 — SendGrid email notifications | **Complete** |
-| P1-18 — Firebase FCM push notifications | Not started |
+| P1-18 — Firebase FCM push notifications | **Complete** |
 | P1-19 — Admin dashboard live data | Not started |
 | P1-20 — Audit log hash chain verification | Not started |
 | P1-21 — Firestore security rules | Not started |

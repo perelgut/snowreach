@@ -202,10 +202,14 @@ public class WebhookController {
 
             log.info("Job {} → CONFIRMED (intent {})", jobId, pi.getId());
 
-            // Send confirmation emails to both parties now that payment is cleared.
+            // Send confirmation emails + push to both parties now that payment is cleared.
             var confirmedJob = jobService.getJob(jobId);
             notificationService.sendJobConfirmedEmail(
                     confirmedJob.getRequesterId(), confirmedJob.getWorkerId(), confirmedJob);
+            String address = confirmedJob.getPropertyAddress() != null
+                    ? confirmedJob.getPropertyAddress().getFullText() : "the property";
+            notificationService.notifyJobConfirmed(
+                    confirmedJob.getRequesterId(), confirmedJob.getWorkerId(), jobId, address);
 
         } catch (Exception e) {
             log.error("Failed to confirm job {}: {}", jobId, e.getMessage(), e);

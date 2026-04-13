@@ -1,6 +1,7 @@
 package com.yosnowmow.controller;
 
 import com.yosnowmow.dto.CreateUserRequest;
+import com.yosnowmow.dto.FcmTokenRequest;
 import com.yosnowmow.dto.UpdateUserRequest;
 import com.yosnowmow.model.User;
 import com.yosnowmow.security.AuthenticatedUser;
@@ -102,6 +103,29 @@ public class UserController {
 
         requireSelfOrAdmin(caller, userId);
         return ResponseEntity.ok(userService.updateUser(userId, req));
+    }
+
+    /**
+     * Registers or refreshes the caller's FCM device token.
+     *
+     * Called by the React client after Firebase Messaging returns a token
+     * (typically on first login or when the OS refreshes the registration).
+     * Passing an empty string or null body clears the token.
+     *
+     * @param userId the Firebase Auth UID (must match the caller)
+     * @param caller the authenticated caller, injected from the SecurityContext
+     * @param req    body containing the new FCM token
+     * @return HTTP 204 No Content on success
+     */
+    @PatchMapping("/{userId}/fcm-token")
+    public ResponseEntity<Void> updateFcmToken(
+            @PathVariable String userId,
+            @AuthenticationPrincipal AuthenticatedUser caller,
+            @Valid @RequestBody FcmTokenRequest req) {
+
+        requireSelfOrAdmin(caller, userId);
+        userService.updateFcmToken(userId, req.getFcmToken());
+        return ResponseEntity.noContent().build();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

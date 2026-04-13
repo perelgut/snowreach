@@ -151,7 +151,7 @@ public class DispatchService {
                 return;
             }
 
-            sendOffer(jobId, next.get());
+            sendOffer(jobId, next.get(), job);
 
         } catch (Exception e) {
             log.error("Dispatch error for job {}: {}", jobId, e.getMessage(), e);
@@ -497,8 +497,10 @@ public class DispatchService {
 
     /**
      * Writes the jobRequest document, notifies the Worker, and schedules the expiry timer.
+     *
+     * @param job the full job document (used to extract address and payout for the push)
      */
-    private void sendOffer(String jobId, String workerId)
+    private void sendOffer(String jobId, String workerId, Job job)
             throws InterruptedException, ExecutionException {
 
         Timestamp now      = Timestamp.now();
@@ -526,7 +528,11 @@ public class DispatchService {
                 "updatedAt",                  now
         ).get();
 
-        notificationService.sendJobRequest(workerId, jobId);
+        // Push notification to Worker with address and estimated payout.
+        String address   = (job.getPropertyAddress() != null && job.getPropertyAddress().getFullText() != null)
+                ? job.getPropertyAddress().getFullText() : "nearby property";
+        double payoutCAD = job.getWorkerPayoutCAD() != null ? job.getWorkerPayoutCAD() : 0.0;
+        notificationService.sendJobRequest(workerId, jobId, address, payoutCAD);
         scheduleQuartzTimer(jobId, workerId, OFFER_DURATION_SECONDS * 1000L);
 
         log.info("Offer sent: job={} worker={} expires={}", jobId, workerId, expiresAt);

@@ -205,6 +205,31 @@ public class UserService {
         return getUser(userId);
     }
 
+    /**
+     * Updates the FCM device token on the user document.
+     *
+     * Called by {@code PATCH /api/users/{uid}/fcm-token} when the React client
+     * obtains a new token from Firebase Messaging (e.g. after login or after the
+     * OS refreshes the registration).  Passing null or empty string clears the token.
+     *
+     * @param userId   Firebase Auth UID of the user
+     * @param fcmToken the new FCM token (may be null to clear)
+     */
+    public void updateFcmToken(String userId, String fcmToken) {
+        try {
+            Map<String, Object> updates = new HashMap<>();
+            updates.put("fcmToken",  fcmToken);   // null is a valid value (clears it)
+            updates.put("updatedAt", Timestamp.now());
+            firestore.collection(USERS_COLLECTION).document(userId).update(updates).get();
+            log.debug("FCM token updated for uid={}", userId);
+        } catch (InterruptedException | ExecutionException e) {
+            Thread.currentThread().interrupt();
+            log.error("Firestore error updating FCM token for uid {}: {}", userId, e.getMessage(), e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to update FCM token");
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /**
