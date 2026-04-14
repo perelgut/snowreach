@@ -1987,7 +1987,7 @@ onSnapshot(feedRef, (snapshot) => { /* update notification bell */ });
 | P1-18 — Firebase FCM push notifications | **Complete** |
 | P1-19 — Admin dashboard live data | **Complete** |
 | P1-20 — Audit log hash chain verification | **Complete** |
-| P1-21 — Firestore security rules | Not started |
+| P1-21 — Firestore security rules | **Complete** |
 | P1-22 — Integration test suite | Not started |
 | P1-23 — Production deployment | Not started |
 
@@ -2157,3 +2157,70 @@ This was omitted in Session 9 when P1-18 was implemented. The React client shoul
 **Build verification:** `npm run build` passed (123 modules, 567ms, 0 errors).
 
 **Commit:** P1-19 implementation committed to `main`.
+
+---
+
+### P1-21 — Firestore Security Rules + Storage Rules + Index Updates
+
+**`firebase/firestore.rules`** — full rewrite replacing the "DENY ALL" stub.
+
+Architecture: ALL operational writes go through the Spring Boot Admin SDK (which bypasses rules entirely). Rules govern only client-side reads via the Firestore JS SDK and one narrow client-side write.
+
+**Helper functions:**
+- `isSignedIn()` — `request.auth != null`
+- `isOwner(uid)` — signed in + `request.auth.uid == uid`
+- `isAdmin()` — signed in + `'admin' in request.auth.token.roles`
+- `isWorker()` / `isRequester()` — role checks (lowercase, matching UserService custom claims)
+
+**Collection rules (with reasoning):**
+
+| Collection | Read | Write | Why client write is denied |
+|---|---|---|---|
+| `users/{uid}` | `isOwner(uid) \|\| isAdmin()` | `false` | Role assignment is server-validated; worker profile data is geocoded server-side |
+| `jobs/{jobId}` | requester \|\| worker \|\| admin | `false` | All transitions go through server state machine |
+| `jobRequests/{requestId}` | `workerId == uid \|\| isAdmin()` | `false` | Offer lifecycle (create/expire/accept) is server-orchestrated |
+| `ratings/{ratingId}` | `raterUid == uid \|\| rateeUid == uid \|\| isAdmin()` | `false` | Triggers payout logic; must be server-validated |
+| `notifications/{uid}/feed/{notifId}` | `isOwner(uid)` | Only `isRead` update | System-generated content must not be forged |
+| `disputes/{disputeId}` | requester \|\| worker \|\| admin | `false` | P2-01 pre-written; dispute triggers payment holds |
+| `geocache/{hash}` | `false` | `false` | Internal only |
+| `stripeEvents/{eventId}` | `false` | `false` | Webhook dedup; must not be readable |
+| `/{document=**}` (catch-all) | `false` | `false` | Future collections default to locked |
+
+**Notable divergences from the plan spec:**
+- Plan used `'ADMIN'` (uppercase) in custom claims → actual code uses `'admin'` (lowercase, set by `UserService.setCustomClaims()`)
+- Plan had `resource.data.currentWorkerId` → actual field is `resource.data.workerId`
+- Plan had separate `workers/{uid}` collection → actual implementation embeds worker profile in `users/{uid}.worker`
+
+**Notification `isRead` update rule:**
+```
+allow update: if isOwner(uid)
+  && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+```
+This uses Firestore's `diff().affectedKeys()` to verify only the `isRead` field is being changed — any attempt to modify other fields (title, body, type, etc.) is rejected.
+
+**`firebase/storage.rules`** — full rewrite replacing the one-liner stub.
+
+| Path | Read | Write | Reason |
+|---|---|---|---|
+| `jobs/{jobId}/photos/{fileName}` | `isSignedIn()` | `false` | Full job-participation check is in backend API (can't join Firestore from Storage rules efficiently) |
+| `disputes/{disputeId}/{party}/{fileName}` | `isAdmin()` | `false` | Sensitive adjudication material |
+| `workers/{uid}/insurance/{fileName}` | `isAdmin() \|\| isOwner(uid)` | `false` | Insurance docs trigger backend verification workflow |
+| `/{allPaths=**}` (catch-all) | `false` | `false` | Default locked |
+
+**`firebase/firestore.indexes.json`** — added 6 new indexes:
+
+| Collection | Fields | Purpose |
+|---|---|---|
+| `jobs` | `status ASC, requesterId ASC, createdAt DESC` | Admin filtered: status + requester |
+| `jobs` | `status ASC, workerId ASC, createdAt DESC` | Admin filtered: status + worker |
+| `users` | `roles ARRAY_CONTAINS, createdAt DESC` | Admin users tab: filter by role |
+| `users` | `accountStatus ASC, createdAt DESC` | Admin users tab: filter by status |
+| `feed` (COLLECTION_GROUP) | `isRead ASC, createdAt DESC` | Notification bell: unread first |
+| `jobRequests` | `status ASC, sentAt ASC` | DispatchService recovery: find PENDING offers |
+
+**Audit Firestore index (separate project — not in this file):**
+The P1-20 audit integrity check query requires a composite index in the `yosnowmow-audit` Firebase project:
+```
+Collection: auditLog  |  Fields: timestamp ASC, sequenceNumber ASC
+```
+This must be created manually in the audit project's Firestore console before the first `AuditIntegrityJob` run.

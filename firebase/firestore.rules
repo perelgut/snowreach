@@ -1,26 +1,18 @@
 // ============================================================
-// YoSnowMow — Firestore Collection Structure
-// Full security rules are implemented in P1-21.
-// This file documents all 13 collection paths for reference.
+// YoSnowMow — Firestore Security Rules (P1-21)
 //
-// PRIMARY DATABASE (yosnowmow-dev / yosnowmow-prod):
-//   /users/{uid}                        — account profile (both roles)
-//   /workers/{uid}                      — worker-specific data (equipment, service area, ratings)
-//   /jobs/{jobId}                       — job document (full lifecycle, all financial fields in cents)
-//   /jobRequests/{id}                   — pending dispatch record (one per REQUESTED job)
-//   /ratings/{id}                       — mutual ratings after job completion
-//   /disputes/{disputeId}               — dispute record with statements and evidence refs
-//   /notifications/{uid}/feed/{notifId} — per-user notification feed (subcollection)
-//   /geocache/{hash}                    — cached geocoding results keyed by postal-code hash
-//   /analytics/daily/{date}             — daily roll-up aggregates (date = YYYY-MM-DD)
-//   /analytics/summary/current          — live summary document for admin dashboard
-//   /fraudFlags/{flagId}                — automated fraud detection flags
-//   /adminReviewQueue/{id}              — items requiring manual admin review
+// Architecture principle:
+//   ALL operational writes flow through the Spring Boot backend using the
+//   Firebase Admin SDK, which bypasses these rules entirely.  These rules
+//   govern ONLY client-side reads (React app via the Firestore JS SDK) and
+//   a single narrow client-side write (marking a notification as read).
 //
-// AUDIT DATABASE (yosnowmow-audit — separate Firebase project, append-only):
-//   /auditLog/{entryId}                 — SHA-256 hash-chained audit entries
+// Role claims:
+//   Roles are lowercase strings in the "roles" array custom claim on the
+//   Firebase ID token — set by UserService.setCustomClaims().
+//   Valid values: "requester", "worker", "admin"
 //
-// Deploy commands:
+// Deploy:
 //   Dev:  firebase use default && firebase deploy --only firestore:rules
 //   Prod: firebase use prod    && firebase deploy --only firestore:rules
 // ============================================================
@@ -28,9 +20,179 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // DENY ALL — security rules implemented in P1-21
+
+    // ── Helper functions ──────────────────────────────────────────────────────
+
+    /** Any Firebase-authenticated request. */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    /** Signed-in user whose UID matches the document owner. */
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    /**
+     * Admin role check.
+     * Roles are stored as a list of lowercase strings in the "roles" custom claim.
+     * An admin token has roles: [..., "admin"].
+     */
+    function isAdmin() {
+      return isSignedIn() && 'admin' in request.auth.token.roles;
+    }
+
+    /** Worker role check — user holds the "worker" role. */
+    function isWorker() {
+      return isSignedIn() && 'worker' in request.auth.token.roles;
+    }
+
+    /** Requester role check — user holds the "requester" role. */
+    function isRequester() {
+      return isSignedIn() && 'requester' in request.auth.token.roles;
+    }
+
+    // ── users/{uid} ───────────────────────────────────────────────────────────
+    //
+    // Stores the account profile for both Requesters and Workers.
+    // The Worker sub-profile (equipment, service area, pricing tiers, ratings)
+    // is embedded as the "worker" sub-object — there is no separate collection.
+    //
+    // Readable by: the account holder and admins.
+    // Writes: ALWAYS via Admin SDK (UserService, WorkerService) — client denied.
+    //   Reasons:
+    //     - Role assignment must be server-validated (users cannot self-assign "admin").
+    //     - Worker profile data (pricing, geocoded coords) is set server-side.
+    //     - FCM token updates go through PATCH /api/users/{uid}/fcm-token endpoint.
+
+    match /users/{uid} {
+      allow read:  if isOwner(uid) || isAdmin();
+      allow write: if false;
+    }
+
+    // ── jobs/{jobId} ──────────────────────────────────────────────────────────
+    //
+    // Full job lifecycle document — REQUESTED through SETTLED.
+    //
+    // Readable by: the requester, the assigned worker (once workerId is set), admins.
+    // Client-side real-time listeners (onSnapshot) enable live status updates in
+    // the React UI without polling.
+    //
+    // Writes: ALWAYS via Admin SDK (JobService, PaymentService, WebhookController).
+    //   Reason: all transitions go through the server-side state machine to enforce
+    //   the REQUESTED→PENDING_DEPOSIT→CONFIRMED→... sequence and financial writes.
+
+    match /jobs/{jobId} {
+      allow read: if isSignedIn() && (
+        resource.data.requesterId == request.auth.uid ||
+        resource.data.workerId    == request.auth.uid ||
+        isAdmin()
+      );
+      allow write: if false;
+    }
+
+    // ── jobRequests/{requestId} ───────────────────────────────────────────────
+    //
+    // Dispatch offer records, one per Worker per job attempt.
+    // Document ID: "{jobId}_{workerId}".
+    //
+    // Readable by: the target Worker (to display the incoming offer) and admins.
+    //
+    // Writes: ALWAYS via Admin SDK (DispatchService).
+    //   Reason: offer creation, acceptance, and expiry are server-orchestrated;
+    //   no client-side mutation is safe.
+
+    match /jobRequests/{requestId} {
+      allow read: if isSignedIn() && (
+        resource.data.workerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow write: if false;
+    }
+
+    // ── ratings/{ratingId} ────────────────────────────────────────────────────
+    //
+    // Mutual ratings after job completion.
+    // Document ID: "{jobId}_{raterRole}" (e.g. "abc123_REQUESTER").
+    //
+    // Readable by: the rater, the ratee, and admins.
+    // (Workers can see their own incoming ratings; Requesters can see theirs.)
+    //
+    // Writes: ALWAYS via Admin SDK (RatingService).
+    //   Reason: rating submission triggers payout release logic and worker
+    //   aggregate updates — must be server-validated.
+
+    match /ratings/{ratingId} {
+      allow read: if isSignedIn() && (
+        resource.data.raterUid == request.auth.uid ||
+        resource.data.rateeUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow write: if false;
+    }
+
+    // ── notifications/{uid}/feed/{notifId} ────────────────────────────────────
+    //
+    // Per-user in-app notification feed, written by NotificationService (Admin SDK).
+    // The React client subscribes with onSnapshot() to drive the notification bell.
+    //
+    // Read:   own feed only.
+    // Update: ONLY to mark a notification as read (toggle isRead field).
+    //         Validated by checking that the update affects only the "isRead" key.
+    // Create / Delete: Admin SDK only — denied for clients.
+    //   Reason: notification content is system-generated and must not be forged.
+
+    match /notifications/{uid}/feed/{notifId} {
+      allow read:   if isOwner(uid);
+      allow update: if isOwner(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      // create and delete have no allow rule → implicitly denied
+    }
+
+    // ── disputes/{disputeId} ─────────────────────────────────────────────────
+    //
+    // Dispute records — full implementation in P2-01.
+    // Rules pre-written so the collection is secured on its first document write.
+    //
+    // Readable by: the job's requester, the job's worker, and admins.
+    //
+    // Writes: ALWAYS via Admin SDK (DisputeService, planned P2-01).
+    //   Reason: dispute initiation, evidence collection, and resolution trigger
+    //   payment holds and releases — must be server-validated.
+
+    match /disputes/{disputeId} {
+      allow read: if isSignedIn() && (
+        resource.data.requesterId == request.auth.uid ||
+        resource.data.workerId    == request.auth.uid ||
+        isAdmin()
+      );
+      allow write: if false;
+    }
+
+    // ── Internal / backend-only collections — ALL client access denied ─────────
+
+    // geocache: geocoding results keyed by SHA-256 of postal-code input.
+    // Never exposed to clients; read and written only by GeocodingService.
+    match /geocache/{hash} {
+      allow read, write: if false;
+    }
+
+    // stripeEvents: Stripe webhook idempotency keys.
+    // Written by WebhookController to prevent duplicate event processing.
+    // Must never be readable or writable by clients.
+    match /stripeEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    // ── Catch-all: deny everything not explicitly permitted above ─────────────
+    //
+    // Collections that will be added in Phase 2 (analytics, fraudFlags,
+    // adminReviewQueue, launchZones) are denied here until their rules are
+    // written.  This ensures new collections default to locked rather than open.
+
     match /{document=**} {
       allow read, write: if false;
     }
+
   }
 }

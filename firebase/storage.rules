@@ -1,9 +1,107 @@
+// ============================================================
+// YoSnowMow — Firebase Storage Security Rules (P1-21)
+//
+// Architecture principle:
+//   All file uploads flow through the Spring Boot backend (StorageController),
+//   which uses the Firebase Admin SDK and GCS client — bypassing these rules.
+//   These rules govern ONLY direct client-side reads via the Firebase Storage JS SDK.
+//
+//   All client writes are denied.  Uploading via the client SDK would bypass
+//   server-side virus scanning, file-type validation, and size limits.
+//
+// Storage bucket paths:
+//   gs://{bucket}/jobs/{jobId}/photos/{fileName}       — job site photos
+//   gs://{bucket}/disputes/{disputeId}/{party}/{file}  — dispute evidence (P2-01)
+//   gs://{bucket}/workers/{uid}/insurance/{fileName}   — insurance declarations (P3)
+//
+// Deploy:
+//   Dev:  firebase use default && firebase deploy --only storage
+//   Prod: firebase use prod    && firebase deploy --only storage
+// ============================================================
+
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // DENY ALL — storage rules implemented in P1-21
+
+    // ── Helper functions ──────────────────────────────────────────────────────
+
+    /** Any Firebase-authenticated request. */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    /**
+     * Admin role check.
+     * Roles are lowercase strings in the "roles" custom claim array.
+     */
+    function isAdmin() {
+      return request.auth != null && 'admin' in request.auth.token.roles;
+    }
+
+    /** Signed-in user whose UID matches the path owner. */
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // ── Job photos ────────────────────────────────────────────────────────────
+    //
+    // Photos submitted by the Requester at job creation and by the Worker at
+    // completion (up to 5 per party).  Stored at jobs/{jobId}/photos/{fileName}.
+    //
+    // Read:  any authenticated user — full job-participation check is enforced in
+    //        the backend GET /api/jobs/{id}/photos endpoint rather than here, since
+    //        Storage rules cannot join against Firestore job documents efficiently.
+    //
+    // Write: ALWAYS via Admin SDK (StorageController).
+    //   Reason: uploads go through the backend for virus scanning, type validation,
+    //   and linking the Cloud Storage object ID back to the job document.
+
+    match /jobs/{jobId}/photos/{fileName} {
+      allow read:  if isSignedIn();
+      allow write: if false;
+    }
+
+    // ── Dispute evidence ──────────────────────────────────────────────────────
+    //
+    // Evidence photos uploaded when a dispute is opened (P2-01).
+    // Path: disputes/{disputeId}/{party}/{fileName}
+    // "party" is either "requester" or "worker".
+    //
+    // Read:  admins only — dispute evidence is sensitive adjudication material
+    //        and must not be viewable by either party directly.
+    //
+    // Write: ALWAYS via Admin SDK (DisputeService, P2-01).
+    //   Reason: evidence must be server-validated and linked to the dispute record.
+
+    match /disputes/{disputeId}/{party}/{fileName} {
+      allow read:  if isAdmin();
+      allow write: if false;
+    }
+
+    // ── Worker insurance declarations (Phase 3) ───────────────────────────────
+    //
+    // Insurance policy documents uploaded by Workers.
+    // Path: workers/{uid}/insurance/{fileName}
+    //
+    // Read:  the Worker who owns the document, or an admin.
+    //
+    // Write: ALWAYS via Admin SDK (WorkerService, Phase 3).
+    //   Reason: insurance document upload triggers backend verification workflow.
+
+    match /workers/{uid}/insurance/{fileName} {
+      allow read:  if isAdmin() || isOwner(uid);
+      allow write: if false;
+    }
+
+    // ── Catch-all: deny all other paths ──────────────────────────────────────
+    //
+    // Any storage path not explicitly listed above is denied.
+    // Future paths (e.g. profile photos, launch-zone maps) will be added here
+    // with explicit rules when their upload flows are implemented.
+
     match /{allPaths=**} {
       allow read, write: if false;
     }
+
   }
 }
