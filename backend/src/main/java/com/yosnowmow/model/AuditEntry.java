@@ -46,6 +46,13 @@ public class AuditEntry {
      */
     private String entryHash;
 
+    /**
+     * Global sequence number — monotonically increasing across the entire audit log.
+     * Entry 1 is the first entry ever written; used to order the chain during
+     * integrity verification.
+     */
+    private long sequenceNumber;
+
     private Timestamp timestamp;
 
     // ── Constructors ─────────────────────────────────────────────────────────
@@ -81,6 +88,9 @@ public class AuditEntry {
 
     public String getEntryHash() { return entryHash; }
     public void setEntryHash(String entryHash) { this.entryHash = entryHash; }
+
+    public long getSequenceNumber() { return sequenceNumber; }
+    public void setSequenceNumber(long sequenceNumber) { this.sequenceNumber = sequenceNumber; }
 
     public Timestamp getTimestamp() { return timestamp; }
     public void setTimestamp(Timestamp timestamp) { this.timestamp = timestamp; }

@@ -1986,10 +1986,110 @@ onSnapshot(feedRef, (snapshot) => { /* update notification bell */ });
 | P1-17 — SendGrid email notifications | **Complete** |
 | P1-18 — Firebase FCM push notifications | **Complete** |
 | P1-19 — Admin dashboard live data | **Complete** |
-| P1-20 — Audit log hash chain verification | Not started |
+| P1-20 — Audit log hash chain verification | **Complete** |
 | P1-21 — Firestore security rules | Not started |
 | P1-22 — Integration test suite | Not started |
 | P1-23 — Production deployment | Not started |
+
+---
+
+## Session 10 (continued) — 2026-04-13
+
+### Admin BCC on all outgoing emails
+
+Added a BCC to `perelgut@gmail.com` on every transactional email sent by the app.
+Configurable via `ADMIN_BCC_EMAIL` environment variable; empty string disables it.
+
+**Files changed:**
+- `backend/src/main/resources/application.yml` — added `yosnowmow.sendgrid.bcc-email: ${ADMIN_BCC_EMAIL:perelgut@gmail.com}`
+- `backend/src/main/java/com/yosnowmow/service/NotificationService.java` — added `@Value bccEmail` field; in `sendEmail()` private helper, calls `mail.getPersonalization().get(0).addBcc(new Email(bccEmail))` when non-blank
+
+Because all 10 email methods funnel through the single `sendEmail()` helper, one code change covers all outgoing mail.
+
+**Commit:** `49524d9`
+
+---
+
+### P1-20 — Audit Log Hash Chain Verification
+
+Completed the full audit log service with global SHA-256 hash chaining, Firestore transactions, daily Quartz integrity check, and admin alert email on failure.
+
+**Background:**
+From P1-08 onward, `AuditLogService.write()` had been called from all state-changing services (JobService, PaymentService, DispatchService, UserController, AdminController, etc.). The stub implementation existed with per-entity hash chaining but no sequence numbers, no Firestore transactions, and no integrity check. P1-20 completes this to the full spec.
+
+**Key design decision — global chain vs per-entity chain:**
+The plan specifies a global chain (single `__chain_head` document). This is more tamper-evident than per-entity chaining: removing or inserting any entry anywhere in the log breaks every subsequent hash. The existing stub used per-entity chaining; the rewrite switches to the global model. No migration needed (development environment, no production data).
+
+**`AuditEntry.java`** — added `sequenceNumber: long` field (getter/setter).
+
+**`AuditLogService.java`** — full rewrite:
+
+_Global chain meta-documents (in the `auditLog` collection):_
+- `__chain_head` — `{ hash: "...", lastUpdated: Timestamp }` — stores the `entryHash` of the most recently written entry
+- `__seq_counter` — `{ value: N }` — monotonically increasing global sequence number
+
+_GENESIS_HASH:_ 64 hex zeros (`"000...000"`, 64 chars) — used as `previousHash` for the very first entry.
+
+_`write()` — Firestore transaction:_
+```
+auditFirestore.runTransaction(transaction -> {
+    chainSnap = transaction.get(__chain_head).get()
+    seqSnap   = transaction.get(__seq_counter).get()
+    prevHash  = chainSnap.hash ?? GENESIS_HASH
+    newSeq    = seqSnap.value + 1  (or 1 if first entry)
+    entryHash = SHA-256(prevHash \0 timestamp.seconds \0 actorUid \0
+                        action \0 entityId \0 beforeJson \0 afterJson)
+    transaction.set(entryDoc, {...all fields including sequenceNumber})
+    transaction.set(__chain_head, {hash: entryHash, lastUpdated: now})
+    transaction.set(__seq_counter, {value: newSeq})
+    return null
+})
+```
+
+The null-byte separator (`\0`) between fields prevents length-extension attacks where adjacent strings could be misinterpreted.
+
+_`verifyPreviousDay()` — returns `IntegrityReport(totalChecked, mismatches, date)`:_
+- Queries `auditLog` where `timestamp >= yesterday_start && timestamp < today_start`, ordered by `timestamp ASC, sequenceNumber ASC`
+- For each entry: recomputes `SHA-256(entry.previousHash \0 entry.timestamp.seconds \0 ...)` and verifies equals `entry.entryHash`
+- For consecutive entries within the day: verifies `entries[i].previousHash == entries[i-1].entryHash`
+- Returns `mismatches == -1` if the query itself errored (signals "could not complete")
+
+_`IntegrityReport` inner class:_ immutable value object with `totalChecked`, `mismatches`, `date`, `passed()`, `errored()` helpers.
+
+**`AuditIntegrityJob.java`** (new — `scheduler/AuditIntegrityJob.java`):
+- `@DisallowConcurrentExecution` Quartz `Job` implementation
+- `@Autowired AuditLogService` and `@Autowired NotificationService`
+- Calls `auditLogService.verifyPreviousDay()`
+- If `report.errored()` or `!report.passed()`: calls `notificationService.sendAuditIntegrityAlertEmail(report)` and logs at ERROR level
+- Otherwise: logs success at INFO level
+
+**`QuartzConfig.java`** — upgraded from empty placeholder to active config:
+- `@Bean JobDetail auditIntegrityJobDetail()` — registers `AuditIntegrityJob` as a durable job in the "audit" group
+- `@Bean Trigger auditIntegrityTrigger(JobDetail)` — cron `"0 0 2 * * ?"` fires at 2:00 AM daily
+
+**`NotificationService.java`** — added `sendAuditIntegrityAlertEmail(IntegrityReport)`:
+- `@Async`, sends to `ADMIN_EMAIL`
+- Two message variants: error (query failed) vs failure (mismatches found)
+- Automatically BCC'd to `perelgut@gmail.com` by the new global BCC logic
+
+**`backend/Dockerfile`** — added timezone:
+```dockerfile
+ENV TZ=America/Toronto
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+```
+Required so the Quartz cron fires at 2 AM Ontario time, not UTC.
+
+**`write()` call sites:** No changes needed. The method signature is unchanged; only the internal implementation differs (global chain, transactions, sequence numbers).
+
+**Build verification:** `mvn compile` passed (66 source files, 0 errors).
+
+**Important note for production deployment:**
+The `auditLog` collection in Firestore requires a composite index to support the integrity check query:
+```
+Collection: auditLog
+Fields: timestamp ASC, sequenceNumber ASC
+```
+This index must be created in the audit Firebase project before the first integrity check runs.
 
 ---
 

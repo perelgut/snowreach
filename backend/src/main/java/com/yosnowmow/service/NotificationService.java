@@ -28,6 +28,7 @@ import com.sendgrid.helpers.mail.objects.Content;
 import com.sendgrid.helpers.mail.objects.Email;
 import com.yosnowmow.model.Address;
 import com.yosnowmow.model.Job;
+import com.yosnowmow.service.AuditLogService.IntegrityReport;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -631,6 +632,42 @@ public class NotificationService {
                         at this time. Your job (<strong>%s</strong>) has been cancelled at no charge.</p>
                         <p>You are welcome to post a new job — more workers may be available later.</p>
                         """.formatted(jobId)));
+    }
+
+    /**
+     * Sends an alert email to the admin when the daily audit log integrity check
+     * detects hash mismatches or a verification error.
+     * Called by {@link com.yosnowmow.scheduler.AuditIntegrityJob}.
+     *
+     * @param report the {@link IntegrityReport} from {@code AuditLogService.verifyPreviousDay()}
+     */
+    @Async
+    public void sendAuditIntegrityAlertEmail(IntegrityReport report) {
+        String subject;
+        String bodyHtml;
+
+        if (report.errored()) {
+            subject = "[CRITICAL] Audit log integrity check could not complete — " + report.getDate();
+            bodyHtml = buildHtml("Audit Integrity Check Error", """
+                    <p>The daily audit log integrity check for <strong>%s</strong> could not
+                    complete due to a query or system error.</p>
+                    <p>Please review the application logs for details and investigate immediately.
+                    Search for: <code>AuditIntegrityJob ERRORED</code></p>
+                    """.formatted(report.getDate()));
+        } else {
+            subject = "[CRITICAL] Audit log integrity FAILED — " + report.getMismatches()
+                    + " mismatch(es) on " + report.getDate();
+            bodyHtml = buildHtml("Audit Integrity Check Failed", """
+                    <p>The daily audit log integrity check detected <strong>%d mismatch(es)</strong>
+                    out of <strong>%d</strong> entries checked for <strong>%s</strong>.</p>
+                    <p>This may indicate tampering with the audit record.
+                    <strong>Immediate investigation is required.</strong></p>
+                    <p>Search application logs for: <code>AUDIT INTEGRITY MISMATCH</code>
+                    or <code>AUDIT CHAIN BREAK</code></p>
+                    """.formatted(report.getMismatches(), report.getTotalChecked(), report.getDate()));
+        }
+
+        sendEmail(ADMIN_EMAIL, subject, bodyHtml);
     }
 
     /**

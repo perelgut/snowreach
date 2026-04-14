@@ -34,6 +34,11 @@ FROM eclipse-temurin:21-jre-jammy
 
 WORKDIR /app
 
+# Set the container timezone to America/Toronto so that Quartz cron
+# expressions (e.g. the 2 AM audit integrity job) fire at Ontario local time.
+ENV TZ=America/Toronto
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
 # Copy only the built JAR from the builder stage — no Maven,
 # no source code, no intermediate build artifacts in the image.
 COPY --from=builder /app/target/*.jar app.jar
