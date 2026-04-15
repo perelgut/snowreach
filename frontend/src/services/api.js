@@ -99,12 +99,47 @@ export const releasePayment = (jobId) =>
 // ── Job API ─────────────────────────────────────────────────────────────────
 
 /**
+ * Post a new job.
+ * @param {{ scope: string[], propertyAddressText: string, startWindowEarliest?: string,
+ *           startWindowLatest?: string, notesForWorker?: string,
+ *           personalWorkerOnly?: boolean }} data
+ * @returns {Promise<Job>}
+ */
+export const postJob = (data) =>
+  api.post('/api/jobs', data).then(r => r.data)
+
+/**
+ * List jobs for the current user (requester sees their own jobs; admin sees all).
+ * @param {{ status?: string, page?: number, size?: number }} params
+ * @returns {Promise<Job[]>}
+ */
+export const listJobs = (params = {}) =>
+  api.get('/api/jobs', { params }).then(r => r.data)
+
+/**
  * Fetch a single job by ID (admin or job participant).
  * @param {string} jobId
  * @returns {Promise<Job>}
  */
 export const getJob = (jobId) =>
   api.get(`/api/jobs/${jobId}`).then(r => r.data)
+
+/**
+ * Cancel a job. A $10 + HST fee applies if status is CONFIRMED.
+ * @param {string} jobId
+ * @returns {Promise<Job>}
+ */
+export const cancelJob = (jobId) =>
+  api.post(`/api/jobs/${jobId}/cancel`).then(r => r.data)
+
+/**
+ * Open a dispute on a COMPLETE job (requester only, within 2-hour window).
+ * @param {string} jobId
+ * @param {string} reason
+ * @returns {Promise<Job>}
+ */
+export const disputeJob = (jobId, reason) =>
+  api.post(`/api/jobs/${jobId}/dispute`, { reason }).then(r => r.data)
 
 // ── User API ─────────────────────────────────────────────────────────────────
 

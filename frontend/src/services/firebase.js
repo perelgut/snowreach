@@ -34,6 +34,10 @@ const firebaseConfig = {
   appId:             import.meta.env.VITE_FIREBASE_APP_ID,
 }
 
+// Module-level flag — prevents connectXxxEmulator from being called twice
+// on the same instance during Vite HMR reloads.
+let firebase_emulatorsConnected = false
+
 // ---------------------------------------------------------------------------
 // Initialise the Firebase app (singleton — Vite hot-reload safe)
 // ---------------------------------------------------------------------------
@@ -48,14 +52,12 @@ const storage = getStorage(app)
 // ---------------------------------------------------------------------------
 if (import.meta.env.VITE_USE_EMULATORS === 'true') {
   // connectXxxEmulator throws if called twice on the same instance.
-  // We track connection state on the instance objects to prevent that.
-  if (!auth._canInitEmulator) {
+  // Guard with a module-level flag — reliable across Vite HMR reloads
+  // without depending on private Firebase SDK internals.
+  if (!firebase_emulatorsConnected) {
+    firebase_emulatorsConnected = true
     connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true })
-  }
-  if (!db._settings?.host?.includes('localhost')) {
     connectFirestoreEmulator(db, 'localhost', 8080)
-  }
-  if (!storage._protocol?.includes('localhost')) {
     connectStorageEmulator(storage, 'localhost', 9199)
   }
 }

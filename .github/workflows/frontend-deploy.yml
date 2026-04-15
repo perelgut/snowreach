@@ -82,5 +82,4 @@ jobs:
           npx --yes firebase-tools@latest deploy \
             --only hosting \
             --project "${{ secrets.VITE_FIREBASE_PROJECT_ID }}" \
-            --non-interactive \
-            --debug 2>&1 | tail -60
+            --non-interactive

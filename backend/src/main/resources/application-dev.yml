@@ -15,7 +15,7 @@ server:
 
 yosnowmow:
   firebase:
-    project-id:    demo-yosnowmow   # demo- prefix = offline mode, no real project needed
+    project-id:    yosnowmow-dev    # must match .firebaserc default + seed-emulator.js
     use-emulator:  true
     emulator-host: localhost:8080   # Firestore emulator port (firebase.json)
 

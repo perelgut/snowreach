@@ -1,13 +1,29 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { useMock } from '../../context/MockStateContext'
+import { getJob, getUser, cancelJob, disputeJob } from '../../services/api'
 import StatusPill from '../../components/StatusPill'
 import Modal from '../../components/Modal'
 import { WorkerProfileModal } from './WorkerProfile'
 
-const fmt = cents => '$' + (cents / 100).toFixed(2)
+// Format a CAD amount (double from backend, may be null before pricing is set)
+const fmtCAD = amount => amount != null ? '$' + Number(amount).toFixed(2) : '—'
 
-// States shown on the timeline (terminal/exception states excluded — they replace the last node visually)
+// Convert scope array to readable label
+const SCOPE_LABELS = { driveway: 'Driveway', sidewalk: 'Walkway / Sidewalk' }
+const fmtScope = scope => scope?.map(s => SCOPE_LABELS[s] ?? s).join(', ') ?? '—'
+
+// Format a backend timestamp (may be Firestore Timestamp object, ISO string, or null)
+function fmtTimestamp(ts) {
+  if (!ts) return 'ASAP'
+  try {
+    const d = ts.seconds ? new Date(ts.seconds * 1000) : new Date(ts)
+    return d.toLocaleString('en-CA', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  } catch {
+    return String(ts)
+  }
+}
+
+// States shown on the timeline (terminal/exception states excluded)
 const TIMELINE_STATES = ['REQUESTED', 'PENDING_DEPOSIT', 'CONFIRMED', 'IN_PROGRESS', 'COMPLETE']
 const TIMELINE_LABELS = {
   REQUESTED:       'Job Posted',
@@ -16,9 +32,6 @@ const TIMELINE_LABELS = {
   IN_PROGRESS:     'In Progress',
   COMPLETE:        'Complete',
 }
-
-// Used for the Advance State dev tool
-const ADVANCE_ORDER = ['REQUESTED', 'PENDING_DEPOSIT', 'CONFIRMED', 'IN_PROGRESS', 'COMPLETE', 'RELEASED']
 
 const STATUS_DESC = {
   REQUESTED:       "Your job has been posted and we're matching you with nearby workers.",
@@ -35,51 +48,112 @@ const STATUS_DESC = {
 }
 
 export default function JobStatus() {
-  const { id } = useParams()
-  const navigate = useNavigate()
-  const { jobs, setJobStatus, advanceJob, mockWorker } = useMock()
-  const job = jobs.find(j => j.jobId === id)
+  const { id }     = useParams()
+  const navigate   = useNavigate()
+
+  const [job,     setJob]     = useState(null)
+  const [worker,  setWorker]  = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState(null)
 
   // Modal open states
-  const [cancelOpen, setCancelOpen] = useState(false)
-  const [disputeOpen, setDisputeOpen] = useState(false)
+  const [cancelOpen,    setCancelOpen]    = useState(false)
+  const [disputeOpen,   setDisputeOpen]   = useState(false)
   const [disputeReason, setDisputeReason] = useState('')
-  const [profileOpen, setProfileOpen] = useState(false)
+  const [profileOpen,   setProfileOpen]   = useState(false)
+  const [submitting,    setSubmitting]    = useState(false)
 
-  if (!job) return (
+  // Load job on mount (and whenever id changes)
+  useEffect(() => {
+    setLoading(true)
+    setError(null)
+    getJob(id)
+      .then(data => setJob(data))
+      .catch(err => {
+        console.error('[JobStatus] Failed to load job:', err)
+        setError('Could not load this job. Please try again.')
+      })
+      .finally(() => setLoading(false))
+  }, [id])
+
+  // Load worker profile once workerId is available
+  useEffect(() => {
+    if (!job?.workerId) { setWorker(null); return }
+    getUser(job.workerId)
+      .then(data => setWorker(data))
+      .catch(err => console.error('[JobStatus] Failed to load worker profile:', err))
+  }, [job?.workerId])
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
+  async function handleCancel() {
+    setSubmitting(true)
+    try {
+      const updated = await cancelJob(id)
+      setJob(updated)
+      setCancelOpen(false)
+    } catch (err) {
+      console.error('[JobStatus] Cancel failed:', err)
+      alert('Cancel failed — please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleDispute() {
+    setSubmitting(true)
+    try {
+      const updated = await disputeJob(id, disputeReason)
+      setJob(updated)
+      setDisputeOpen(false)
+      setDisputeReason('')
+    } catch (err) {
+      console.error('[JobStatus] Dispute failed:', err)
+      alert('Dispute submission failed — please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // ── Loading / error states ────────────────────────────────────────────────
+
+  if (loading) return (
+    <div className="card" style={{ textAlign: 'center', padding: 'var(--sp-10)', color: 'var(--gray-400)' }}>
+      Loading job…
+    </div>
+  )
+
+  if (error || !job) return (
     <div className="card" style={{ textAlign: 'center', padding: 'var(--sp-10)' }}>
-      <p style={{ color: 'var(--gray-400)' }}>Job not found.</p>
+      <p style={{ color: 'var(--gray-400)' }}>{error ?? 'Job not found.'}</p>
       <Link to="/requester/jobs" className="btn btn-primary" style={{ marginTop: 16, display: 'inline-flex' }}>← My Jobs</Link>
     </div>
   )
 
-  // Timeline position — use ADVANCE_ORDER to find current index
-  const advanceIdx = ADVANCE_ORDER.indexOf(job.status)
-  const canAdvance = advanceIdx >= 0 && advanceIdx < ADVANCE_ORDER.length - 1
+  // ── Derived state ─────────────────────────────────────────────────────────
 
-  // Map exceptional terminal states onto the last visible timeline node
   const terminalStates = ['DISPUTED', 'CANCELLED', 'INCOMPLETE', 'REFUNDED', 'SETTLED']
   const timelineIdx = terminalStates.includes(job.status)
     ? TIMELINE_STATES.length  // all nodes shown as past
     : TIMELINE_STATES.indexOf(job.status)
 
-  // Action visibility
   const canCancel  = ['REQUESTED', 'PENDING_DEPOSIT', 'CONFIRMED'].includes(job.status)
   const canDispute = job.status === 'COMPLETE'
   const canRate    = job.status === 'COMPLETE'
-
-  function handleCancel() {
-    setJobStatus(job.jobId, 'CANCELLED')
-    setCancelOpen(false)
-  }
-
-  function handleDispute() {
-    setJobStatus(job.jobId, 'DISPUTED')
-    setDisputeOpen(false)
-    setDisputeReason('')
-  }
-
   const workerVisible = ['CONFIRMED', 'IN_PROGRESS', 'COMPLETE', 'RELEASED', 'DISPUTED'].includes(job.status)
+  const pricingAvailable = job.totalAmountCAD != null
+
+  // Worker avatar initials
+  const workerInitials = worker?.displayName
+    ? worker.displayName.split(' ').map(w => w[0]).join('').toUpperCase()
+    : '?'
+
+  // Platform fee = tier price − worker payout (both are before-HST on worker side)
+  const platformFeeCAD = (job.tierPriceCAD != null && job.workerPayoutCAD != null)
+    ? job.tierPriceCAD - job.workerPayoutCAD
+    : null
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div style={{ maxWidth: 600, margin: '0 auto' }}>
@@ -141,17 +215,19 @@ export default function JobStatus() {
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontWeight: 700, fontSize: 18, flexShrink: 0,
             }}>
-              {mockWorker.displayName.split(' ').map(w => w[0]).join('')}
+              {workerInitials}
             </div>
 
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 15 }}>{mockWorker.displayName}</div>
-              <div style={{ fontSize: 13, color: 'var(--gray-500)', marginTop: 2 }}>
-                {'★'.repeat(Math.round(mockWorker.averageRating))}{'☆'.repeat(5 - Math.round(mockWorker.averageRating))}
-                {' '}{mockWorker.averageRating} · {mockWorker.totalJobsCompleted} jobs
-              </div>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>{worker?.displayName ?? 'Loading…'}</div>
+              {worker && (
+                <div style={{ fontSize: 13, color: 'var(--gray-500)', marginTop: 2 }}>
+                  {'★'.repeat(Math.round(worker.averageRating ?? 0))}{'☆'.repeat(5 - Math.round(worker.averageRating ?? 0))}
+                  {' '}{(worker.averageRating ?? 0).toFixed(1)} · {worker.totalJobsCompleted ?? 0} jobs
+                </div>
+              )}
               <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 2 }}>
-                {job.currentWorkerDistance ?? '1.2 km'} away · Husqvarna ST224 · ✓ Background checked
+                ✓ Background checked
               </div>
             </div>
 
@@ -171,49 +247,60 @@ export default function JobStatus() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ color: 'var(--gray-500)' }}>Address</span>
-            <span style={{ fontWeight: 600, textAlign: 'right', maxWidth: '60%' }}>{job.address}</span>
+            <span style={{ fontWeight: 600, textAlign: 'right', maxWidth: '60%' }}>
+              {job.propertyAddress?.fullText ?? '—'}
+            </span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ color: 'var(--gray-500)' }}>Services</span>
-            <span style={{ fontWeight: 600, textAlign: 'right', maxWidth: '60%' }}>{job.serviceTypes.join(', ')}</span>
+            <span style={{ fontWeight: 600, textAlign: 'right', maxWidth: '60%' }}>
+              {fmtScope(job.scope)}
+            </span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ color: 'var(--gray-500)' }}>Scheduled</span>
-            <span style={{ fontWeight: 600 }}>{job.scheduledTime}</span>
+            <span style={{ fontWeight: 600 }}>{fmtTimestamp(job.startWindowEarliest)}</span>
           </div>
-          {job.specialNotes && (
+          {job.notesForWorker && (
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: 'var(--gray-500)' }}>Notes</span>
-              <span style={{ fontWeight: 600, textAlign: 'right', maxWidth: '60%' }}>{job.specialNotes}</span>
+              <span style={{ fontWeight: 600, textAlign: 'right', maxWidth: '60%' }}>{job.notesForWorker}</span>
             </div>
           )}
         </div>
 
         <div className="divider" style={{ margin: '16px 0' }} />
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ color: 'var(--gray-500)' }}>Agreed fee</span>
-            <span>{fmt(job.depositAmountCents - job.hstCents)}</span>
+        {/* Pricing — shown only once a worker accepts and pricing is set */}
+        {pricingAvailable ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--gray-500)' }}>Agreed fee</span>
+              <span>{fmtCAD(job.tierPriceCAD)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--gray-500)' }}>HST (13%)</span>
+              <span>+ {fmtCAD(job.hstAmountCAD)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+              <span>Total charged</span>
+              <span style={{ color: 'var(--blue)' }}>{fmtCAD(job.totalAmountCAD)}</span>
+            </div>
+            <div className="divider" style={{ margin: '2px 0' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--gray-500)' }}>Less platform fee (15%)</span>
+              <span style={{ color: 'var(--gray-500)' }}>− {fmtCAD(platformFeeCAD)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+              <span>{job.status === 'RELEASED' ? 'Paid to Worker' : 'To be paid to Worker'}</span>
+              <span style={{ color: 'var(--green)' }}>{fmtCAD(job.workerPayoutCAD)}</span>
+            </div>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ color: 'var(--gray-500)' }}>HST (13%)</span>
-            <span>+ {fmt(job.hstCents)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
-            <span>Total charged</span>
-            <span style={{ color: 'var(--blue)' }}>{fmt(job.depositAmountCents)}</span>
-          </div>
-          <div className="divider" style={{ margin: '2px 0' }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ color: 'var(--gray-500)' }}>Less platform fee (15%)</span>
-            <span style={{ color: 'var(--gray-500)' }}>− {fmt(job.platformFeeCents)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
-            <span>{job.status === 'RELEASED' ? 'Paid to Worker' : 'To be paid to Worker'}</span>
-            <span style={{ color: 'var(--green)' }}>{fmt(job.netWorkerCents)}</span>
-          </div>
-        </div>
+        ) : (
+          <p style={{ fontSize: 13, color: 'var(--gray-400)', textAlign: 'center', padding: 'var(--sp-3) 0' }}>
+            Pricing will appear once a worker accepts this job.
+          </p>
+        )}
       </div>
 
       {/* Action buttons */}
@@ -245,24 +332,6 @@ export default function JobStatus() {
         </div>
       )}
 
-      {/* Dev tools — only visible in development builds */}
-      {import.meta.env.DEV && (
-        <div className="card" style={{ background: 'var(--gray-50)' }}>
-          <h3 style={{ fontWeight: 700, fontSize: 13, color: 'var(--gray-500)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: .5 }}>Dev Tools</h3>
-          <p style={{ fontSize: 12, color: 'var(--gray-400)', marginBottom: 12 }}>Advance job state to test UI transitions</p>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {canAdvance && (
-              <button className="btn btn-primary btn-sm" onClick={() => advanceJob(job.jobId)}>
-                Advance → {ADVANCE_ORDER[advanceIdx + 1]}
-              </button>
-            )}
-            {!canAdvance && (
-              <span style={{ fontSize: 13, color: 'var(--gray-400)' }}>No further states</span>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Cancel confirmation modal */}
       <Modal
         isOpen={cancelOpen}
@@ -271,8 +340,10 @@ export default function JobStatus() {
         size="sm"
         footer={
           <div style={{ display: 'flex', gap: 'var(--sp-3)', justifyContent: 'flex-end' }}>
-            <button className="btn btn-ghost" onClick={() => setCancelOpen(false)}>Keep Job</button>
-            <button className="btn btn-danger" onClick={handleCancel}>Yes, Cancel</button>
+            <button className="btn btn-ghost" onClick={() => setCancelOpen(false)} disabled={submitting}>Keep Job</button>
+            <button className="btn btn-danger" onClick={handleCancel} disabled={submitting}>
+              {submitting ? 'Cancelling…' : 'Yes, Cancel'}
+            </button>
           </div>
         }
       >
@@ -295,13 +366,13 @@ export default function JobStatus() {
         size="md"
         footer={
           <div style={{ display: 'flex', gap: 'var(--sp-3)', justifyContent: 'flex-end' }}>
-            <button className="btn btn-ghost" onClick={() => { setDisputeOpen(false); setDisputeReason('') }}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => { setDisputeOpen(false); setDisputeReason('') }} disabled={submitting}>Cancel</button>
             <button
               className="btn btn-primary"
-              disabled={disputeReason.trim().length < 10}
+              disabled={disputeReason.trim().length < 10 || submitting}
               onClick={handleDispute}
             >
-              Submit Dispute
+              {submitting ? 'Submitting…' : 'Submit Dispute'}
             </button>
           </div>
         }

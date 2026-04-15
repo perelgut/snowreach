@@ -2806,3 +2806,76 @@ Duration    16.72 s
 | Frontend Vitest | 35 | ✓ |
 | **Total** | **201** | **✓**
 ```
+
+---
+
+## 2026-04-15 — Session: Firebase Emulator Seed, Frontend Deploy, Login UI (P1-06)
+
+### Context
+
+Phase 1 development is underway. Backend is deployed to Cloud Run; frontend deploy to Firebase Hosting was broken. This session fixed the deploy pipeline, seeded test users in the Firebase emulator, and implemented the Login UI (P1-06) with Firebase Auth integration.
+
+---
+
+### Fix: seed-emulator.js project ID mismatch
+
+**Problem:** `seed-emulator.js` initialised the Firebase Admin SDK with project ID `demo-yosnowmow`, but the emulator suite is started with project `yosnowmow-dev` (from `.firebaserc`). With `singleProjectMode: false` the emulators allow both namespaces, but data written to `demo-yosnowmow` is invisible in the Emulator UI (which shows `yosnowmow-dev`).
+
+**Fix:** Changed `admin.initializeApp({ projectId: 'demo-yosnowmow' })` to `admin.initializeApp({ projectId: 'yosnowmow-dev' })` in `firebase/seed-emulator.js`.
+
+**Result:** Seed script creates four test accounts that are visible in the Auth tab of the Emulator UI at `http://localhost:4000`.
+
+---
+
+### Fix: Frontend Deploy — firebase.json not found
+
+**Root cause (sequence of investigation):**
+
+1. **First attempt:** `FirebaseExtended/action-hosting-deploy@v0` was looking for `firebase.json` in the repo root, but it lives in `firebase/`. Added `entryPoint: firebase` to the action — failed with the same error. The `entryPoint` parameter in `@v0` has unreliable path resolution.
+
+2. **Second attempt:** Moved `firebase.json` and `.firebaserc` to the repo root (`yosnowmow/firebase.json`), updating relative paths (`hosting.public: frontend/dist`, rules paths prefixed with `firebase/`). Also added `workflow_dispatch` trigger to the workflow so it can be manually triggered without a frontend file change. Still failed — turns out the workflow hadn't re-run against the new commit because the `frontend/**` path filter meant only the old (pre-fix) run existed.
+
+3. **Third attempt (new run):** The `action-hosting-deploy@v0` still could not find `firebase.json` at the repo root, even with `entryPoint: .`. Root cause unknown — possibly a bug in that specific action version's `GITHUB_WORKSPACE` resolution. **Decision:** replaced the action entirely with direct `firebase-tools` CLI.
+
+4. **Fourth attempt:** Replaced action with `npx firebase-tools@latest deploy` using `GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json`. New error: "Failed to get Firebase project." The CLI uses ADC (Application Default Credentials); manually writing the service account JSON to a file and setting `GOOGLE_APPLICATION_CREDENTIALS` was not sufficient.
+
+5. **Fifth attempt:** Added `google-github-actions/auth@v2` before the CLI step to properly wire up ADC. Still same "Failed to get Firebase project" error.
+
+6. **Diagnosis:** The `firebase-adminsdk` service account was missing the **Firebase Hosting Admin** (`roles/firebasehosting.admin`) role. It had Firebase Auth Admin, Storage Admin, and Firebase Admin SDK Administrator Service Agent — but not Hosting Admin. Added the role in GCP Console → IAM.
+
+7. **Resolution:** Deploy succeeded on the next run. Removed `--debug` flag from the workflow.
+
+**Final workflow shape (`frontend-deploy.yml`):**
+- Build with Vite (VITE_ secrets injected, `VITE_USE_EMULATORS=false`)
+- `google-github-actions/auth@v2` authenticates via `FIREBASE_SERVICE_ACCOUNT` secret
+- `npx firebase-tools@latest deploy --only hosting --project $PROJECT_ID --non-interactive`
+
+---
+
+### P1-06: Login UI
+
+**Files created/modified:**
+
+| File | Change |
+|---|---|
+| `frontend/src/context/AuthContext.jsx` | Full implementation — `onAuthStateChanged` listener, Firestore profile fetch, `signIn()`, `signOut()` |
+| `frontend/src/hooks/useAuth.js` | Thin hook over AuthContext |
+| `frontend/src/pages/auth/Login.jsx` | Email + password form, Firebase error translation, role-based post-login redirect |
+| `frontend/src/pages/auth/Login.module.css` | Card layout, error state, responsive |
+| `frontend/src/main.jsx` | Added `<AuthProvider>` wrapping `<MockStateProvider>` |
+| `frontend/src/App.jsx` | Added `ProtectedRoute` component; wrapped `/requester`, `/worker`, `/admin` route trees |
+
+**Key decisions:**
+
+- `AuthContext` fetches the Firestore `users/{uid}` document after each sign-in so that `userProfile.roles[]` is available for role-based redirect without an extra API call.
+- Post-login redirect: admin → `/admin`; worker-only → `/worker`; requester or dual-role → `/requester`.
+- `ProtectedRoute` passes `location.state.from` to `/login` so the user is redirected back to their original destination after sign-in.
+- `ProtectedRoute` renders `null` while `loading` to prevent a flash of the login page on hard reload.
+
+**Bug fixed during testing — firebase.js emulator guard was inverted:**
+
+`firebase.js` guarded `connectAuthEmulator` with `!auth._canInitEmulator`. In the Firebase SDK, `_canInitEmulator` is `true` on a fresh auth instance and set to `false` after `connectAuthEmulator` is called. The `!` inverted the condition so the emulator was **never connected** — the SDK silently talked to real Firebase Auth (where the seed users don't exist), causing "Incorrect email or password" for all test accounts.
+
+**Fix:** Replaced the inverted private-property guards with a module-level `firebase_emulatorsConnected` boolean that is set to `true` on first connection. All three emulator connections (Auth, Firestore, Storage) are now guarded by the same flag.
+
+**Verification:** Signed in as `requester@yosnowmow.test` and `worker@yosnowmow.test` — both succeed and land on the correct section.

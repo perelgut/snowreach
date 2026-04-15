@@ -40,8 +40,9 @@ yosnowmow:
     # Comma-separated list of allowed origins.
     # Override in profile YMLs or via CORS_ALLOWED_ORIGINS env var.
     allowed-origins:
-      - http://localhost:5173
-      - http://localhost:5000
+      - http://localhost:3000    # Vite dev server (actual port in use)
+      - http://localhost:5173    # Vite dev server (default port)
+      - http://localhost:5000    # Firebase Hosting emulator
       - https://yosnowmow-dev.web.app
       - https://yosnowmow-dev.firebaseapp.com
       - https://yosnowmow.com

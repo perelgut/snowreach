@@ -1,11 +1,22 @@
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { useMock } from '../../context/MockStateContext'
+import { listJobs } from '../../services/api'
 import StatusPill from '../../components/StatusPill'
 
-const fmt = cents => '$' + (cents / 100).toFixed(2)
+const fmtCAD   = amount => amount != null ? '$' + Number(amount).toFixed(2) : null
+const SCOPE_LABELS = { driveway: 'Driveway', sidewalk: 'Walkway / Sidewalk' }
+const fmtScope = scope => scope?.map(s => SCOPE_LABELS[s] ?? s).join(' · ') ?? '—'
 
 export default function JobList() {
-  const { jobs } = useMock()
+  const [jobs,    setJobs]    = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    listJobs()
+      .then(data => setJobs(Array.isArray(data) ? data : []))
+      .catch(err => console.error('[JobList] Failed to load jobs:', err))
+      .finally(() => setLoading(false))
+  }, [])
 
   return (
     <div>
@@ -14,9 +25,12 @@ export default function JobList() {
         <Link to="/requester/post-job" className="btn btn-primary btn-sm">+ New Job</Link>
       </div>
 
-      {jobs.length === 0 ? (
+      {loading ? (
         <div className="card" style={{ textAlign: 'center', padding: 'var(--sp-10)', color: 'var(--gray-400)' }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>🌨️</div>
+          Loading jobs…
+        </div>
+      ) : jobs.length === 0 ? (
+        <div className="card" style={{ textAlign: 'center', padding: 'var(--sp-10)', color: 'var(--gray-400)' }}>
           <p>No jobs yet. Post your first job to get started.</p>
         </div>
       ) : (
@@ -28,18 +42,22 @@ export default function JobList() {
                 onMouseLeave={e => e.currentTarget.style.boxShadow = 'var(--shadow-sm)'}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }} className="truncate">{job.address}</div>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }} className="truncate">
+                    {job.propertyAddress?.fullText ?? '—'}
+                  </div>
                   <div style={{ fontSize: 13, color: 'var(--gray-400)', marginBottom: 2 }}>
-                    {job.serviceTypes.join(' · ')}
+                    {fmtScope(job.scope)}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>
-                    {job.jobId} &nbsp;·&nbsp; {job.scheduledTime}
+                    {job.jobId}
                   </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
                   <StatusPill status={job.status} />
-                  {job.depositAmountCents > 0 && (
-                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-600)' }}>{fmt(job.depositAmountCents)}</span>
+                  {fmtCAD(job.totalAmountCAD) && (
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-600)' }}>
+                      {fmtCAD(job.totalAmountCAD)}
+                    </span>
                   )}
                 </div>
               </div>

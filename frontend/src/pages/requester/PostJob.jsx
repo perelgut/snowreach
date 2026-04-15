@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useMock } from '../../context/MockStateContext'
+import { postJob } from '../../services/api'
 
 const SERVICES = [
   {
@@ -40,9 +40,9 @@ const SERVICES = [
 const fmt = cents => '$' + (cents / 100).toFixed(2)
 
 export default function PostJob() {
-  const navigate = useNavigate()
-  const { addJob } = useMock()
+  const navigate   = useNavigate()
   const [step, setStep] = useState(1)
+  const [submitting, setSubmitting] = useState(false)
   const [searching, setSearching] = useState(false)
   const [found, setFound] = useState(false)
   const [form, setForm] = useState({
@@ -86,22 +86,54 @@ export default function PostJob() {
     setStep(3)
   }
 
-  function submit() {
+  async function submit() {
     if (!ack) { setErrors({ ack: 'You must acknowledge to continue' }); return }
-    const id = addJob({
-      serviceTypes: selectedServices.map(s => {
+    setSubmitting(true)
+    setErrors({})
+
+    try {
+      // Map frontend service keys to the two backend scope values.
+      // Driveway → "driveway"; walkway/steps/salting → "sidewalk".
+      const scopeSet = new Set()
+      if (form.services.driveway) scopeSet.add('driveway')
+      if (form.services.walkway || form.services.steps || form.services.salting) {
+        scopeSet.add('sidewalk')
+      }
+      const scope = scopeSet.size > 0 ? [...scopeSet] : ['driveway']
+
+      // Build detailed service description for the Worker notes field.
+      const serviceLines = selectedServices.map(s => {
         const sizeObj = s.sizes.find(sz => sz.key === form.services[s.key])
-        return `${s.label} (${sizeObj.label} — ${sizeObj.desc})`
-      }),
-      address: form.address,
-      scheduledTime: form.schedule === 'asap' ? 'ASAP' : `${form.date} ${form.time}`,
-      specialNotes: form.notes,
-      depositAmountCents: total,
-      platformFeeCents: fee,
-      hstCents: hst,
-      netWorkerCents: workerNet,
-    })
-    navigate(`/requester/jobs/${id}`)
+        return `${s.label}: ${sizeObj.label} (${sizeObj.desc}) — est. ${fmt(sizeObj.price)}`
+      })
+      const notesForWorker = [
+        serviceLines.join('\n'),
+        form.notes.trim(),
+      ].filter(Boolean).join('\n\n') || null
+
+      // Scheduled start window (null = ASAP)
+      const startWindowEarliest =
+        form.schedule === 'scheduled' && form.date && form.time
+          ? new Date(`${form.date}T${form.time}:00`).toISOString()
+          : null
+
+      const job = await postJob({
+        scope,
+        propertyAddressText:  form.address.trim(),
+        startWindowEarliest,
+        startWindowLatest:    null,
+        notesForWorker,
+        personalWorkerOnly:   false,
+      })
+
+      navigate(`/requester/jobs/${job.jobId}`)
+
+    } catch (err) {
+      const msg = err.response?.data?.message
+        ?? 'Failed to post job. Please check the address and try again.'
+      setErrors({ submit: msg })
+      setSubmitting(false)
+    }
   }
 
   const StepCircle = ({ n }) => (
@@ -294,10 +326,13 @@ export default function PostJob() {
             <input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} style={{ marginTop: 2, flexShrink: 0 }} />
             I acknowledge that the Worker is an independent contractor and not an employee of YoSnowMow. All liability for services rests with the Worker.
           </label>
-          {errors.ack && <div className="alert alert-error" style={{ marginBottom: 12 }}>{errors.ack}</div>}
+          {errors.ack    && <div className="alert alert-error" style={{ marginBottom: 12 }}>{errors.ack}</div>}
+          {errors.submit && <div className="alert alert-error" style={{ marginBottom: 12 }}>{errors.submit}</div>}
           <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
-            <button className="btn btn-ghost" onClick={() => setStep(3)}>← Back</button>
-            <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={submit}>Post Job ❄️</button>
+            <button className="btn btn-ghost" onClick={() => setStep(3)} disabled={submitting}>← Back</button>
+            <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={submit} disabled={submitting}>
+              {submitting ? 'Posting…' : 'Post Job'}
+            </button>
           </div>
         </div>
       )}
