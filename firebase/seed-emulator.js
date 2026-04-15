@@ -256,6 +256,173 @@ const TEST_USERS = [
     },
   },
 
+  // ── Worker: Scarborough (Benfrisco Crescent) ─────────────────────────────
+  {
+    email:       'worker2@yosnowmow.test',
+    password:    'Worker2123!',
+    displayName: 'Marcus Webb',
+    roles:       ['worker'],
+    firestoreDoc: {
+      name:                    'Marcus Webb',
+      dateOfBirth:             '1988-07-14',
+      ageVerifiedAt:           now,
+      tosVersion:              '1.0',
+      tosAcceptedAt:           now,
+      privacyPolicyVersion:    '1.0',
+      privacyPolicyAcceptedAt: now,
+      roles:                   ['worker'],
+      accountStatus:           'active',
+      phoneNumber:             '+16135550004',
+      phoneVerifiedAt:         now,
+      fcmToken:                null,
+      launchZoneId:            null,
+      createdAt:               now,
+      updatedAt:               now,
+
+      worker: {
+        designation:          'personal',
+
+        baseAddress: {
+          streetNumber: '12',
+          street:       'Benfrisco Crescent',
+          city:         'Scarborough',
+          province:     'ON',
+          postalCode:   'M1V 1L5',
+          fullText:     '12 Benfrisco Crescent, Scarborough, ON M1V 1L5',
+        },
+
+        // Geocoded coordinates for Agincourt / Scarborough area
+        baseCoords:              new admin.firestore.GeoPoint(43.7934, -79.2750),
+        addressGeocodeMethod:    'google_maps',
+
+        serviceRadiusKm:         8,
+        bufferOptIn:             true,
+
+        tiers: [
+          { maxDistanceKm: 4,  pricePerJobCents: 4800 },
+          { maxDistanceKm: 8,  pricePerJobCents: 6200 },
+        ],
+
+        hstRegistered:           false,
+        hstBusinessNumber:       null,
+
+        stripeConnectAccountId:  null,
+        stripeConnectStatus:     'not_connected',
+
+        status:                  'available',
+        consecutiveNonResponses: 0,
+        activeJobCount:          0,
+        capacityMax:             1,
+
+        isEarlyAdopter:                      true,
+        earlyAdopterCommissionJobsRemaining: 7,
+        earlyAdopterRateExpiry:              null,
+        isFoundingWorker:                    false,
+
+        referralCode:     'MARCW-001',
+        referredByUserId: null,
+
+        phoneVerifiedForJobs: true,
+
+        // Experienced Scarborough worker
+        rating:               4.5,
+        ratingCount:          22,
+        completedJobCount:    22,
+        acceptanceRate:       0.88,
+        avgResponseTimeSec:   210,
+        cancellationRate:     0.0,
+        disputeRate:          0.0,
+        cannotCompleteCount90d: 0,
+
+        backgroundCheckStatus: 'not_submitted',
+        backgroundCheckDate:   null,
+      },
+    },
+  },
+
+  // ── Worker: North York (5000 Yonge Street) ────────────────────────────────
+  {
+    email:       'worker3@yosnowmow.test',
+    password:    'Worker3123!',
+    displayName: 'Priya Sharma',
+    roles:       ['worker'],
+    firestoreDoc: {
+      name:                    'Priya Sharma',
+      dateOfBirth:             '1994-02-20',
+      ageVerifiedAt:           now,
+      tosVersion:              '1.0',
+      tosAcceptedAt:           now,
+      privacyPolicyVersion:    '1.0',
+      privacyPolicyAcceptedAt: now,
+      roles:                   ['worker'],
+      accountStatus:           'active',
+      phoneNumber:             '+16135550005',
+      phoneVerifiedAt:         now,
+      fcmToken:                null,
+      launchZoneId:            null,
+      createdAt:               now,
+      updatedAt:               now,
+
+      worker: {
+        designation:          'personal',
+
+        baseAddress: {
+          streetNumber: '5000',
+          street:       'Yonge Street',
+          city:         'Toronto',
+          province:     'ON',
+          postalCode:   'M2N 5N8',
+          fullText:     '5000 Yonge Street, Toronto, ON M2N 5N8',
+        },
+
+        // Geocoded coordinates for Willowdale / North York area
+        baseCoords:              new admin.firestore.GeoPoint(43.7685, -79.4101),
+        addressGeocodeMethod:    'google_maps',
+
+        serviceRadiusKm:         6,
+        bufferOptIn:             false,
+
+        tiers: [
+          { maxDistanceKm: 6,  pricePerJobCents: 5500 },
+        ],
+
+        hstRegistered:           false,
+        hstBusinessNumber:       null,
+
+        stripeConnectAccountId:  null,
+        stripeConnectStatus:     'not_connected',
+
+        status:                  'available',
+        consecutiveNonResponses: 0,
+        activeJobCount:          0,
+        capacityMax:             1,
+
+        isEarlyAdopter:                      false,
+        earlyAdopterCommissionJobsRemaining: 0,
+        earlyAdopterRateExpiry:              null,
+        isFoundingWorker:                    false,
+
+        referralCode:     'PRIYS-001',
+        referredByUserId: null,
+
+        phoneVerifiedForJobs: true,
+
+        // Newer worker, high rating — good for testing dispatch ranking
+        rating:               4.7,
+        ratingCount:          8,
+        completedJobCount:    8,
+        acceptanceRate:       1.0,
+        avgResponseTimeSec:   95,
+        cancellationRate:     0.0,
+        disputeRate:          0.0,
+        cannotCompleteCount90d: 0,
+
+        backgroundCheckStatus: 'not_submitted',
+        backgroundCheckDate:   null,
+      },
+    },
+  },
+
   // ── Admin ────────────────────────────────────────────────────────────────
   {
     email:       'admin@yosnowmow.test',
