@@ -44,9 +44,10 @@ process.env.FIRESTORE_EMULATOR_HOST     = 'localhost:8080';
 
 const admin = require('firebase-admin');
 
-// demo- prefix tells the Firebase SDK we are in offline / emulator-only mode;
-// no real project credentials are required.
-admin.initializeApp({ projectId: 'demo-yosnowmow' });
+// Use the same project ID the emulator is started with (from .firebaserc default).
+// The FIREBASE_AUTH_EMULATOR_HOST and FIRESTORE_EMULATOR_HOST env vars already
+// redirect all Admin SDK calls to the local emulator — no real credentials needed.
+admin.initializeApp({ projectId: 'yosnowmow-dev' });
 
 const auth = admin.auth();
 const db   = admin.firestore();
