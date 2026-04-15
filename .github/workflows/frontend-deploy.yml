@@ -67,19 +67,15 @@ jobs:
           VITE_API_BASE_URL:                ${{ secrets.VITE_API_BASE_URL }}
           VITE_USE_EMULATORS:               "false"
 
-      # Authenticate to Google Cloud using the Firebase service account JSON.
-      # google-github-actions/auth sets up Application Default Credentials (ADC)
-      # which firebase-tools@latest picks up automatically.
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-
       # Deploy the built dist/ folder to Firebase Hosting via the Firebase CLI.
-      # ADC from the auth step above handles authentication; no token needed.
+      # FIREBASE_TOKEN is a long-lived CI token generated with `firebase login:ci`
+      # and stored as a GitHub secret.  This is more reliable than ADC in CI
+      # because firebase-tools resolves FIREBASE_TOKEN before attempting IAM lookups.
       - name: Deploy to Firebase Hosting
         run: |
           npx --yes firebase-tools@latest deploy \
             --only hosting \
             --project "${{ secrets.VITE_FIREBASE_PROJECT_ID }}" \
             --non-interactive
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
