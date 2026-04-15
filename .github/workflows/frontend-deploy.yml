@@ -68,12 +68,20 @@ jobs:
           VITE_USE_EMULATORS:               "false"
 
       # Deploy the built dist/ folder to Firebase Hosting.
-      # Uses the official Firebase action which handles auth via the
-      # service account JSON set in P1-01.
+      # Uses the Firebase CLI directly (firebase-tools) rather than the
+      # action-hosting-deploy action, which has unreliable firebase.json
+      # path resolution.  Authentication is via the service account JSON
+      # stored in FIREBASE_SERVICE_ACCOUNT; we write it to a temp file,
+      # point GOOGLE_APPLICATION_CREDENTIALS at it, then clean up.
       - name: Deploy to Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken:       ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          channelId:       live
-          projectId:       ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+        run: |
+          echo "$FIREBASE_SA" > /tmp/sa.json
+          GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
+            npx --yes firebase-tools@latest deploy \
+              --only hosting \
+              --project "$PROJECT_ID" \
+              --non-interactive
+          rm -f /tmp/sa.json
+        env:
+          FIREBASE_SA:  ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          PROJECT_ID:   ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
