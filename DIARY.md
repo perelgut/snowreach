@@ -2224,3 +2224,585 @@ The P1-20 audit integrity check query requires a composite index in the `yosnowm
 Collection: auditLog  |  Fields: timestamp ASC, sequenceNumber ASC
 ```
 This must be created manually in the audit project's Firestore console before the first `AuditIntegrityJob` run.
+
+---
+
+## 2026-04-13 — Session 5 (continued): P1-22 Integration Test Suite
+
+### Context
+Previous sessions delivered P1-19 through P1-21. This session implements P1-22: the integration test suite for the backend service layer.
+
+### Discussion: test approach
+The implementation plan called for `@SpringBootTest` + Firebase Emulator. After reviewing the pom.xml and project constraints, a pragmatic decision was made:
+
+- **Unit tests with `@ExtendWith(MockitoExtension.class)`** for the three service test classes. This runs without a Spring context or emulator, making CI fast and dependency-free.
+- **`application-test.yml`** created in `src/test/resources/` documenting the Firebase Emulator configuration for when full integration tests are added in a future session.
+- The reasoning: `@SpringBootTest` with `@MockBean` for all external APIs (Firestore, Stripe, SendGrid, Maps) is equivalent to unit-testing the service layer anyway. Using `@ExtendWith(MockitoExtension.class)` directly is faster and cleaner.
+
+### Files created
+
+**`backend/src/test/resources/application-test.yml`**
+Documents the test profile configuration: in-memory Quartz, Firebase Emulator connection details, placeholder API keys. Not loaded by any current test (they don't use Spring context), but ready for future `@SpringBootTest` integration tests.
+
+**`backend/src/test/java/com/yosnowmow/StateMachineTest.java`** (17 tests)
+Tests `JobService.transition()` end-to-end through the Firestore `runTransaction()` path.
+
+Key design decision: `runTransaction()` is instrumented via Mockito `doAnswer` to execute the transaction lambda synchronously against a mock `Transaction`. This lets the business logic inside the lambda (transition table lookup, actor permission checks) be exercised without a real Firestore instance.
+
+Tests cover:
+- Valid transitions: REQUESTED→PENDING_DEPOSIT (system), CONFIRMED→IN_PROGRESS (worker), IN_PROGRESS→COMPLETE (worker), COMPLETE→DISPUTED (requester within 2hr), DISPUTED→RELEASED/REFUNDED (admin), RELEASED→SETTLED (admin)
+- Invalid transitions: REQUESTED→COMPLETE, CANCELLED→anything, SETTLED→anything
+- Permission enforcement: wrong worker, requester tries worker-only, non-admin tries admin-only
+- Dispute window: 30 min after COMPLETE succeeds; 3 hours after COMPLETE fails; boundary test (2 hours + 1 sec) fails
+
+**`backend/src/test/java/com/yosnowmow/JobServiceTest.java`** (12 tests)
+Tests `JobService.createJob()` and `cancelJob()`.
+
+Technical challenge: `DocumentReference.set()` could not be stubbed via `when().thenReturn()` (possibly due to type-parameter complexity). Resolved by annotating `jobDocRef` with `@Mock(answer = Answers.RETURNS_DEEP_STUBS)` — `set()` and `update()` return deep-stub mock `ApiFuture` objects whose `.get()` returns null (which is fine since the production code discards write results).
+
+Tests cover:
+- Happy path: job created with REQUESTED status, correct requesterId, scope, null pricing fields
+- Multi-scope: `["driveway", "sidewalk"]` stored correctly
+- Guard: active job already exists → HTTP 409
+- Geocoding failure → HTTP 422
+- Invalid scope value ("roof") → HTTP 422
+- Cancel from REQUESTED: no fee; from PENDING_DEPOSIT: no fee; from CONFIRMED: $11.30 fee
+- Cancel by non-requester/non-admin: AccessDeniedException
+- Admin can cancel regardless of requester UID
+
+**`backend/src/test/java/com/yosnowmow/MatchingServiceTest.java`** (9 tests)
+Tests the matching algorithm in `MatchingService.matchAndStoreWorkers()`. Since there is no Spring proxy in pure Mockito tests, `@Async` is inactive and the method runs synchronously.
+
+Algorithm results are captured using `ArgumentCaptor` on the Firestore `update("matchedWorkerIds", list, ...)` call.
+
+Coordinate system: job at 43.6700°N (Toronto downtown). Worker positions calculated using 1° latitude ≈ 111.19 km.
+
+Tests cover:
+- Worker within radius is included (2 km, radius 10 km)
+- Worker outside radius is excluded (26 km north, radius 5 km)
+- Sort order: higher rating first (4.8 before 4.2, same distances); equal rating closer first (1.5 km before 4 km); null rating goes last (effective -1.0)
+- `personalWorkerOnly=true` excludes dispatchers
+- `personalWorkerOnly=false` includes both types
+- `bufferOptIn=true` extends radius by 10%: worker at 5.25 km with 5.0 km radius — excluded without buffer, included with
+- `selectedWorkerIds` bypasses algorithm entirely
+
+### Bug fixed during implementation
+`MatchingServiceTest.matching_preSelectedWorkers_bypassesAlgorithm()` initially failed with Mockito's "UnfinishedStubbingException". Root cause: `mockWorkerDoc()` calls `when(doc.getId()).thenReturn(uid)` inside another `when().thenReturn()` argument list — Java evaluates arguments before calling the outer method, so the inner `when()` executes while the outer stub is incomplete. Fix: assign `mockWorkerDoc(...)` to a variable BEFORE the outer `when().thenReturn()` call.
+
+### Test results
+```
+Tests run: 38
+  StateMachineTest : 17 tests, 0 failures
+  JobServiceTest   : 12 tests, 0 failures
+  MatchingServiceTest:  9 tests, 0 failures
+Build: SUCCESS (10.9 s)
+```
+
+### Remaining tasks in Phase 1
+- P1-23: Production deployment guide (`docs/deployment-guide.md`, final `application-prod.yml`) ← next
+- Manual step (outstanding from P1-20): Create composite index `(timestamp ASC, sequenceNumber ASC)` in the `yosnowmow-audit` Firebase project console
+
+---
+
+## 2026-04-13 — Session: P1-23 Production Deployment Guide
+
+### Context
+P1-22 (integration test suite) completed in the previous session with all 38 tests passing. P1-23 is the final task in Phase 1 — it produces the production deployment guide and finalises `application-prod.yml`.
+
+### Files changed
+
+**`backend/src/main/resources/application-prod.yml`** (updated — was skeleton with 3 entries)
+
+Added production-appropriate settings that were specified in the P1-23 implementation plan prompt but missing from the skeleton:
+- `server.tomcat.threads.max: 200` — constrains thread count for a Cloud Run instance (1–2 vCPU); the default (200) is explicit here for visibility. Rationale: leaving it implicit means the value silently changes if the Spring Boot default changes.
+- `management.endpoint.health.show-details: never` — overrides the base `application.yml` which had `show-details: always`. In production the `/api/health` response must not expose component names, database connection details, or environment variable names — that would be a security information leak. Cloud Run liveness/readiness probes only need the top-level `{"status":"UP"}`.
+- `logging.level.root: WARN` — supplements the existing `com.yosnowmow: INFO` line. Framework noise (Spring, Hibernate, Netty) is suppressed to WARN; application code stays at INFO.
+- Added detailed comments explaining each setting and the reasoning, consistent with the project's documentation-first approach.
+
+**`docs/deployment-guide.md`** (new file)
+
+A comprehensive 8-section deployment guide covering:
+
+1. **Prerequisites** — tool versions and authentication commands
+2. **One-Time Infrastructure Setup** (5 subsections):
+   - GCP Artifact Registry — `gcloud artifacts repositories create` command. Artifact Registry is used instead of Container Registry because Google shut down GCR in March 2025 (this is why the CI/CD workflow was changed in commit `011fb60`).
+   - GCP Secret Manager — full table of 8 required secrets with their descriptions and sources; `gcloud secrets create` template command
+   - Cloud Run Service Account — dedicated `yosnowmow-api-sa` SA with minimum required IAM roles; explanation of why ADC (Application Default Credentials) is preferred over injecting a service account JSON key file
+   - Firebase Projects — the three-project setup (prod, audit, dev) documented in `.firebaserc`; `firebase deploy --only firestore:rules,firestore:indexes,storage` command; reminder about the outstanding P1-20 manual step for the composite index in `yosnowmow-audit`
+   - SendGrid Domain Verification — step-by-step DNS record setup for SPF/DKIM/DMARC
+   - Stripe Webhook Registration — endpoint URL, required events, signing secret flow
+   - GitHub Secrets — full tables for both backend and frontend workflows
+3. **Pre-Deployment Checklist** — grouped by Code & Tests, Infrastructure, Third-Party Services, CORS, GitHub Secrets
+4. **Backend Deployment** — normal CI/CD path (push to main) plus manual deployment commands with blue/green traffic migration (10% canary → 100%)
+5. **Frontend Deployment** — normal CI/CD path plus manual commands with all VITE_ vars
+6. **Smoke Test Checklist** — 6 categories: API health (curl), Auth, User registration, Job creation (with curl examples), Stripe payment flow (stripe CLI), Email delivery, Frontend
+7. **Rollback Procedure** — immediate traffic rollback (seconds, no rebuild) using `gcloud run services update-traffic --to-revisions`; full code revert via `git revert`; Firebase Hosting rollback
+8. **Environment Variables Reference** — complete table of all runtime env vars, their source (Cloud Run vs Secret Manager vs developer machine), and what each does
+
+**Design decisions in the deployment guide:**
+
+- Used `northamerica-northeast2` (Hamilton, ON) not `northamerica-northeast1` (Montreal) — matched the actual region in `backend-deploy.yml`. The P1-23 implementation plan prompt mentioned `northamerica-northeast1`, which appears to be a leftover from an earlier draft before the region was finalised.
+- The manual `gcloud run deploy` command includes `FIREBASE_AUDIT_PROJECT_ID` and `ADMIN_BCC_EMAIL` as `--set-secrets` — these are referenced in `application.yml` but were not in the CI/CD workflow's `--set-secrets` list. This should be reconciled before going live (either add them to `backend-deploy.yml` or confirm they are not needed in prod).
+- Smoke tests use `stripe listen --forward-to` pointing at the production Cloud Run URL — this is intentional for first-deployment validation before setting up a local forwarding proxy for day-to-day development.
+- Security note for Maps API key included: it must never appear in the frontend bundle (the Vite build uses only `VITE_*` variables, none of which is the Maps key).
+
+### Phase 1 complete
+
+All P1-01 through P1-23 tasks are now done. Phase 1 MVP is ready for production deployment when the infrastructure checklist in `docs/deployment-guide.md` §3 is satisfied.
+
+**Outstanding manual step (still required before first deployment):**
+- ~~Create composite index in `yosnowmow-audit` Firestore project: collection `auditLog`, fields `timestamp ASC` + `sequenceNumber ASC`~~ ✓ Done 2026-04-13 — index created via Firebase Console, status: Enabled.
+
+**Remaining follow-up (not blocking deployment):**
+- Add `firebase-audit/` directory to source control so the index definition is code-tracked and repeatable (Option B from deployment guide). Deferred intentionally — console creation unblocked deployment.
+
+---
+
+## 2026-04-13 — Emulator seed script
+
+### Context
+During smoke-testing against the Firebase Auth + Firestore emulators, the engineer hit `INVALID_PASSWORD` and then `EMAIL_NOT_FOUND` when trying to sign in with a test account. Root cause: the Auth emulator starts with no users on every restart, so accounts created in a previous session are gone. The fix is a seed script that recreates all test accounts on demand.
+
+### Decision: Node.js Admin SDK script over PowerShell
+Options considered:
+1. **PowerShell one-liner** (ad-hoc `signUp` REST call) — too fragile; no Firestore doc, no custom claims.
+2. **Node.js + Firebase Admin SDK** — idiomatic, supports `setCustomUserClaims()` and Firestore writes in the same script, runs on any platform.
+3. **Firebase CLI `emulators:export` / `emulators:import`** (Option B) — best for persistent multi-session dev; can be layered on top of Option C later.
+
+Chose Option C (seed script) as the primary solution; Option B can be added alongside it.
+
+### Files created
+
+**`firebase/package.json`** (new)
+- Minimal package for the `firebase/` directory.
+- Single production dependency: `firebase-admin ^12.0.0`.
+- Script: `npm run seed` → `node seed-emulator.js`.
+
+**`firebase/seed-emulator.js`** (new)
+- Sets `FIREBASE_AUTH_EMULATOR_HOST=localhost:9099` and `FIRESTORE_EMULATOR_HOST=localhost:8080` **before** `require('firebase-admin')` so the SDK routes all traffic to the local emulators.
+- Initialises Admin SDK with `projectId: 'demo-yosnowmow'` — the `demo-` prefix engages Firebase offline/emulator mode; no real GCP credentials needed.
+- Creates four test accounts (idempotent — update if exists, create if not):
+
+  | Email | Password | Roles |
+  |---|---|---|
+  | requester@yosnowmow.test | Requester123! | requester |
+  | worker@yosnowmow.test | Worker123! | worker |
+  | both@yosnowmow.test | Both123! | requester, worker |
+  | admin@yosnowmow.test | Admin123! | admin |
+
+- For each account: creates Firebase Auth user → `setCustomUserClaims({ roles: [...] })` → writes `users/{uid}` Firestore document with full schema matching `User.java` and `WorkerProfile.java`.
+- Worker and dual-role accounts include a populated `worker` sub-object with realistic Oakville/Burlington addresses, pricing tiers, and geocoded `GeoPoint` coordinates.
+- Dual-role account (Jordan Tremblay) is seeded with 15 completed jobs and a 4.8 rating to support rating-display testing.
+- Firestore writes use `{ merge: true }` — extra fields written by other scripts (e.g. Stripe IDs added manually) are not wiped.
+
+### Usage
+```bash
+firebase emulators:start
+cd firebase && npm install   # once
+node firebase/seed-emulator.js
+```
+
+---
+
+## 2026-04-14 — Quartz 2am job did not fire
+
+### What happened
+The `AuditIntegrityJob` (P1-20) is configured to fire at `0 0 2 * * ?` (02:00 America/Toronto) via Quartz in `QuartzConfig.java`. No audit integrity check ran overnight.
+
+### Root cause
+Cloud Run scales to zero when idle. No traffic overnight → no warm container → JVM not running → Quartz never fires. The in-memory Quartz store (`spring.quartz.job-store-type: memory`, set in both `application-dev.yml` and `application-prod.yml`) has no persistence, so there is no missed-fire recovery when the container eventually wakes up.
+
+This is a known Phase 1 limitation, already documented in `application-prod.yml`:
+> Phase 2: migrate to Cloud SQL JDBC store
+
+### Decision
+No action taken for now. Two options were considered and deferred:
+- **Short-term:** Set `--min-instances=1` on the Cloud Run service (~$20–30 CAD/month) — keeps the JVM alive so Quartz fires on schedule.
+- **Proper fix (Phase 2):** Migrate Quartz to a Cloud SQL JDBC job store — survives scale-to-zero and container restarts. Already on the Phase 2 roadmap.
+
+### Impact
+The audit log hash-chain for the night of 2026-04-13 was not verified. This is not a data integrity failure — the audit log itself is append-only and hash-chained — but the nightly verification pass was skipped. No alert was sent (alerts only fire when the job runs and finds mismatches, not when the job fails to run at all).
+
+---
+
+## 2026-04-14 — P1-23 WebhookController tests
+
+### Context
+Testing backlog review confirmed that all 10 controllers had zero test coverage. The agreed priority was to start with `WebhookController` because Stripe's webhook signature verification is security-critical: any gap here could allow forged webhook events to capture payments, confirm jobs, or trigger notifications without a real Stripe event.
+
+### What was built
+`backend/src/test/java/com/yosnowmow/controller/WebhookControllerTest.java` — 9 MockMvc tests covering:
+
+| Test | What it proves |
+|---|---|
+| `invalidSignature_returns400` | Invalid Stripe signature → controller returns 400 immediately |
+| `webhookEndpoint_noAuthHeader_isPermitted` | No Firebase token needed; `FirebaseTokenFilter.shouldNotFilter()` skips `/webhooks/**` |
+| `unknownEventType_returns200_noDownstreamCalls` | Unhandled event types → 200 (Stripe must not retry), no service calls |
+| `amountCapturableUpdated_withJobId_capturesCalled` | Happy path: `capturePayment` invoked with correct PI ID |
+| `amountCapturableUpdated_noJobId_skipsCapture` | Guard: missing `jobId` in PI metadata → capture skipped |
+| `paymentSucceeded_pendingDeposit_transitionsToConfirmed` | Job in `PENDING_DEPOSIT` → `transitionStatus(CONFIRMED, "stripe", ...)` |
+| `paymentSucceeded_alreadyConfirmed_skipsTransition` | Idempotency guard inside handler: no duplicate transition |
+| `paymentFailed_notifiesRequester` | `notifyPaymentFailed` called; job is NOT cancelled |
+| `duplicateEvent_returns200_noProcessing` | Firestore idempotency check returns `true` → all processing skipped |
+
+### Key decisions
+
+**`Webhook.constructEvent` is static — use `MockedStatic`**
+HMAC-SHA256 verification is a static method on the Stripe SDK (`Webhook.constructEvent`). Computing real signatures in tests would require knowing the secret and the exact byte-sequence. MockedStatic (Mockito 5.x, bundled with Spring Boot 3.2) lets each test control pass/fail without computing real HMAC values. Each test uses try-with-resources to limit the static mock's scope to that single test.
+
+**`@Import(SecurityConfig.class)` required**
+`@WebMvcTest` uses `WebMvcTypeExcludeFilter` which does NOT include `@EnableWebSecurity` configurations in the component scan by default — only `Filter`, `@Controller`, `WebMvcConfigurer`, etc. Without `@Import(SecurityConfig.class)`, Spring Boot's default security config (CSRF enabled, no custom permits) was applied and every POST returned 403. Adding the import loads our custom chain with `csrf(disabled)` and `/webhooks/**` → `permitAll()`.
+
+**Real `FirebaseTokenFilter` preferred over `@MockBean`**
+Using the real filter (with `@MockBean FirebaseAuth` for its constructor dependency) lets `shouldNotFilter()` run naturally — proving that the production security posture (skip auth for `/webhooks/**`) is correct. A `@MockBean FirebaseTokenFilter` would bypass that check entirely.
+
+**Firestore `runTransaction` mocked with `doReturn`**
+`runTransaction` is a generic method `<T> ApiFuture<T>`. Using `when().thenReturn()` on a generic return triggers unchecked-cast warnings and potential type inference issues. `doReturn(ApiFutures.immediateFuture(Boolean.FALSE)).when(firestore).runTransaction(any())` avoids both. The class-level `@SuppressWarnings("unchecked")` covers remaining generic stubs.
+
+### Test results
+```
+Tests run: 47, Failures: 0, Errors: 0, Skipped: 0
+```
+(38 pre-existing + 9 new; all pass)
+
+---
+
+## 2026-04-14 — Session 2 (continued): P1-24 Remaining Controller Tests
+
+### Context
+Continuing the controller test backlog established in P1-23. The goal was to write `@WebMvcTest` slice tests for all remaining controllers: `JobController`, `UserController`, `PaymentController`, `WorkerController`, `RatingController`, `JobRequestController`, `StorageController`, `AdminController`. `DisputeController` is an empty stub (1-line comment) — skipped.
+
+---
+
+### Root cause discovery: `FirebaseTokenFilter` blocks test auth
+
+**Problem:** All `JobControllerTest` (17 tests) returned 401 even though the `asUser()` helper using `SecurityMockMvcRequestPostProcessors.authentication()` was correctly injecting an `AuthenticatedUser` into the `SecurityContext`.
+
+**Root cause:** `FirebaseTokenFilter.doFilterInternal()` runs before Spring Security evaluates the access control rules. When it finds no `Authorization: Bearer` header, it immediately calls `writeUnauthorized()` (writes 401 JSON) and returns **without calling `filterChain.doFilter()`**. This short-circuits the filter chain before the `SecurityContext` pre-populated by `authentication()` is ever checked.
+
+The `authentication()` post-processor from Spring Security Test uses `RequestAttributeSecurityContextRepository` (stateless config) to store the auth in a request attribute. Spring Security's `SecurityContextHolderFilter` loads it into `SecurityContextHolder` before the filter chain runs. But `FirebaseTokenFilter` then ignores `SecurityContextHolder.getContext().getAuthentication()` entirely — it only looks at the `Authorization` header.
+
+**Fix:** Added an "already authenticated" pass-through check at the top of `doFilterInternal()`:
+```java
+Authentication existingAuth = SecurityContextHolder.getContext().getAuthentication();
+if (existingAuth != null && existingAuth.isAuthenticated()) {
+    filterChain.doFilter(request, response);
+    return;
+}
+```
+**Safety:** With `SessionCreationPolicy.STATELESS`, nothing upstream ever populates `SecurityContextHolder` in production — only the test framework does this via request attributes. The check is therefore a no-op in production and a clean pass-through in tests.
+
+**File changed:** `backend/src/main/java/com/yosnowmow/security/FirebaseTokenFilter.java`
+
+---
+
+### Test pattern: `@Import({SecurityConfig.class, RbacInterceptor.class})`
+
+Any controller that uses `@RequiresRole` needs `RbacInterceptor` imported alongside `SecurityConfig`. `WebMvcConfig` (a `WebMvcConfigurer`, included by `@WebMvcTest`) requires `RbacInterceptor` (a plain `@Component`, excluded by `@WebMvcTest`); without it the app context fails to load.
+
+Controllers with **no** `@RequiresRole` (only inline role checks or no auth logic) only need `@Import(SecurityConfig.class)`.
+
+| Test class | Extra import | Reason |
+|---|---|---|
+| `UserControllerTest` | none | inline `requireSelfOrAdmin()` only |
+| `RatingControllerTest` | none | no role enforcement |
+| `JobControllerTest` | `RbacInterceptor` | `@RequiresRole` on 5 methods |
+| `PaymentControllerTest` | `RbacInterceptor` | `@RequiresRole` on 3 methods |
+| `WorkerControllerTest` | `RbacInterceptor` | `@RequiresRole` on 2 methods |
+| `JobRequestControllerTest` | `RbacInterceptor` | `@RequiresRole` on 1 method |
+| `StorageControllerTest` | `RbacInterceptor` | `@RequiresRole` on 1 method |
+| `AdminControllerTest` | `RbacInterceptor` | `@RequiresRole` on all 6 methods |
+
+---
+
+### Mockito gotcha: mixing real args and matchers in `when()` / `verify()`
+
+Several stubs were initially written as `when(mock.method(realArg, null == null ? any() : any()))` — this evaluates to `when(mock.method(realArg, any()))` but Mockito rejects it because you cannot mix real argument values with Mockito matchers in the same stubbing call. The fix in all cases: use either `eq(realArg)` (a matcher equivalent to the real value) or replace all args with matchers.
+
+---
+
+### Mockito gotcha: `DocumentReference.update(String, Object, Object...)` varargs stub
+
+`StorageController.uploadPhoto()` calls:
+```java
+firestore.collection("jobs").document(jobId).update(
+    "completionImageIds", FieldValue.arrayUnion(downloadUrl),
+    "updatedAt",          Timestamp.now()
+).get();
+```
+
+Stubbing `docRef.update(anyString(), any(), (Object[]) any())` did not match the compiled call. The Mockito varargs matcher `(Object[]) any()` was not recognized correctly for the 3-arg varargs form. **Fix:** Created `docRef` with `Answers.RETURNS_DEEP_STUBS` so the entire `update(...).get()` chain returns non-null mocks without any explicit varargs stub.
+
+---
+
+### WorkerController: `@NotBlank` on `baseAddressFullText` applies to PATCH too
+
+`WorkerProfileRequest.baseAddressFullText` carries `@NotBlank`, which fails on `null`. Since the same DTO is used for both POST and PATCH endpoints (validation groups are not used), any `@Valid`-annotated PATCH call must include `baseAddressFullText` in the body. Test bodies updated to include this field.
+
+---
+
+### New test files created (all passing)
+
+| File | Tests | Notes |
+|---|---|---|
+| `JobControllerTest.java` | 17 | Role enforcement, address visibility (spy), cancel routing |
+| `UserControllerTest.java` | 9 | Self-or-admin check, FCM token update |
+| `PaymentControllerTest.java` | 10 | Escrow intent, onboarding, release, refund |
+| `WorkerControllerTest.java` | 5 | Activate worker, update own/admin profile |
+| `RatingControllerTest.java` | 6 | Submit rating (validation), list ratings |
+| `JobRequestControllerTest.java` | 3 | Worker accept/decline, non-worker 403 |
+| `StorageControllerTest.java` | 6 | Upload photo (ownership, status, max-photos, RBAC) |
+| `AdminControllerTest.java` | 9 | Non-admin 403 (all endpoints), happy-path for service-delegating endpoints |
+
+### Test results
+```
+Tests run: 112, Failures: 0, Errors: 0, Skipped: 0
+```
+(64 pre-session + 48 new; all pass)
+
+---
+
+## 2026-04-14 — P1-25 Firebase Emulator Integration Tests (Phase 1: UserService)
+
+### Context
+With all 112 unit + controller tests green, the next phase is Firebase Emulator integration tests. These use `@SpringBootTest(webEnvironment=NONE)` + `@ActiveProfiles("test")` to load the full Spring context against the local Firestore emulator, giving end-to-end confidence that writes actually reach the database and domain rules (age check, role validation, duplicate UID prevention) are enforced correctly.
+
+---
+
+### Bug fix: duplicate `yosnowmow:` root key in `application-test.yml`
+
+**Root cause:** When the firebase emulator config was added to `application-test.yml` in the previous session, it was placed under a NEW `yosnowmow:` block rather than being merged into the existing one (which held sendgrid/maps/stripe keys). SnakeYAML (used by Spring Boot's YAML loader) rejects duplicate root-level keys and threw:
+
+```
+found duplicate key yosnowmow
+```
+
+This caused ALL test classes that loaded the test profile YAML to fail context loading.
+
+**Fix:** Merged the two `yosnowmow:` sections into a single block. The `firebase:`, `sendgrid:`, `maps:`, and `stripe:` sub-keys are now all siblings under one root `yosnowmow:` node.
+
+**File changed:** `backend/src/test/resources/application-test.yml`
+
+---
+
+### New file: `FirestoreUserServiceTest.java`
+
+**Path:** `backend/src/test/java/com/yosnowmow/integration/FirestoreUserServiceTest.java`
+
+**Package:** `com.yosnowmow.integration` (new `integration` sub-package)
+
+**Annotations:**
+- `@SpringBootTest(webEnvironment = NONE)` — full application context, no embedded Tomcat
+- `@ActiveProfiles("test")` — loads `application-test.yml`; Firestore connects to `localhost:8080`
+- `@Tag("integration")` — reserved for future Maven Surefire include/exclude configuration
+
+**Emulator guard:** `@BeforeAll static void requireEmulator()` calls `assumeTrue(isPortOpen("localhost", 8080), ...)`. If the emulator is not running, the entire class is aborted before any test method executes — BUILD SUCCESS, 0 tests run, no failures.
+
+**Mocks:**
+- `@MockBean FirebaseAuth` — prevents `setCustomUserClaims()` from calling the Auth emulator (which is not required for UserService integration tests)
+- `@MockBean NotificationService` — prevents SendGrid `sendWelcomeEmail()` calls; also prevents `NotificationService`'s `@PostConstruct` from constructing a real SendGrid client
+
+**Test isolation:** `newUid()` generates a `"test-" + UUID` string and records it in `createdUids`. `@AfterEach cleanup()` deletes all recorded documents from the emulator — `delete()` on a non-existent document is a no-op, so tests that throw before writing are still safe.
+
+**Tests (6):**
+
+| Test | Assertion |
+|------|-----------|
+| `createUser_writesDocumentToFirestore` | Returns correct User; `DocumentSnapshot.exists()` is true; Firestore fields match |
+| `createUser_duplicateUid_throws409` | Second `createUser()` with the same UID → HTTP 409 |
+| `getUser_existingDocument_returnsUser` | After `createUser()`, `getUser()` returns the same data |
+| `getUser_nonExistingUid_throwsUserNotFoundException` | `getUser("uid-does-not-exist")` → `UserNotFoundException` |
+| `createUser_underAge_throws422` | `dateOfBirth = "2015-01-01"` → HTTP 422 (validation throws before Firestore write) |
+| `createUser_adminRoleSelfAssigned_throws403` | `roles = ["admin"]` → HTTP 403 (validation throws before Firestore write) |
+
+---
+
+### DispatchService startup concern
+
+`DispatchService.recoverPendingDispatches()` fires on `ContextRefreshedEvent` in a daemon thread. With the emulator running it queries `jobRequests` (returns empty — no-op). Without the emulator the query throws an exception, which is caught by the daemon thread's `catch (Exception e)` wrapper. Either way, the Spring context starts cleanly and the `@BeforeAll` assumption check handles the skip-if-unavailable case.
+
+---
+
+### Test results after this session
+
+```
+Non-integration tests:  Tests run: 112, Failures: 0, Errors: 0, Skipped: 0
+Integration tests (emulator off): Tests run: 0, Failures: 0, Errors: 0, Skipped: 0  (BUILD SUCCESS)
+```
+
+Integration tests will report 6/6 when run with `firebase emulators:start --only firestore`.
+
+---
+
+## 2026-04-14 — P1-25 confirmed: integration tests green against live emulator
+
+User ran `firebase emulators:start --only firestore` then `mvn test -Dgroups=integration`.
+
+```
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0  — BUILD SUCCESS
+```
+
+`FirestoreUserServiceTest` is fully verified end-to-end. All 6 write/read/validation paths confirmed against real Firestore emulator data.
+
+---
+
+## 2026-04-14 — P1-26 FirestoreJobServiceTest — integration tests for JobService
+
+### New file: `FirestoreJobServiceTest.java`
+
+**Path:** `backend/src/test/java/com/yosnowmow/integration/FirestoreJobServiceTest.java`
+
+Same infrastructure as `FirestoreUserServiceTest`: `@SpringBootTest(webEnvironment=NONE)`, `@ActiveProfiles("test")`, `@Tag("integration")`, `@BeforeAll` emulator guard.
+
+**Additional mock vs UserService tests:**
+- `@MockBean GeocodingService` — `createJob()` calls `geocodingService.geocode()` which hits Google Maps. Default stub returns Toronto coords (`43.6532, -79.3832`). The `createJob_geocodingFails` test overrides it per-test to throw `GeocodingException`.
+
+**`AuditLogService` intentionally not mocked** — uses the real `auditFirestore` bean pointing to `demo-yosnowmow-audit` in the same emulator. The `JOB_CREATED` and `STATUS_PENDING_DEPOSIT` audit entries actually write through, giving end-to-end coverage of the audit hash-chain bootstrap from `GENESIS_HASH`.
+
+**Per-test user isolation:** `@BeforeEach setUpUser()` calls `UserService.createUser()` to write a fresh requester document before every test, making `guardNoActiveJob()` correctly start from a clean slate.
+
+**Tests (7):**
+
+| Test | What it proves |
+|------|----------------|
+| `createJob_writesDocumentToFirestore` | Full write path; `DocumentSnapshot` verified in emulator |
+| `createJob_requesterHasActiveJob_throws409` | Active-job guard via real Firestore `whereEqualTo` + `whereIn` composite query |
+| `createJob_invalidScope_throws422` | Scope validation fires before Firestore write |
+| `createJob_geocodingFails_throws422` | `GeocodingException` → 422; no document written |
+| `getJob_existingJob_returnsJob` | Read round-trip after write |
+| `getJob_nonExistentId_throwsJobNotFoundException` | Not-found path |
+| `transitionStatus_updatesStatusInFirestore` | `REQUESTED → PENDING_DEPOSIT` reflected in live Firestore doc |
+
+### Test results
+
+```
+Unit + controller tests:                   112/112 pass
+Integration tests (UserService + JobService): 13/13 pass
+Total integration test count: 13 (6 UserService + 7 JobService)
+```
+
+---
+
+## 2026-04-14 — Fix: emulator singleProjectMode warning
+
+**Symptom:** Emulator logged "Multiple projectIds are not recommended in single project mode. Requested project ID demo-yosnowmow, but the emulator is configured for yosnowmow-dev."
+
+**Root cause:** `firebase.json` had `"singleProjectMode": true`. Integration tests always use two project IDs simultaneously — `demo-yosnowmow` (primary Firestore) and `demo-yosnowmow-audit` (audit Firestore) — so the emulator complained on every request to the non-configured project.
+
+**Fix:** Changed `"singleProjectMode": true` → `"singleProjectMode": false` in `firebase/firebase.json`.
+
+**Result:** Warning gone. 13/13 integration tests still pass.
+
+---
+
+## 2026-04-14 — P1-27 Firestore Security Rules Tests
+
+### New files
+
+| File | Purpose |
+|---|---|
+| `firebase/test/firestore.rules.test.mjs` | 41 security rules tests using `@firebase/rules-unit-testing` v4 |
+| Updated `firebase/package.json` | Added `@firebase/rules-unit-testing`, `firebase` v10, `jest` v29 |
+
+### Test runner setup
+
+- **Framework:** Jest v29 with `--experimental-vm-modules` flag for native ESM support
+- **Test file:** `.mjs` extension — treated as ESM without requiring `"type": "module"` in `package.json`, so `seed-emulator.js` (CommonJS) is unaffected
+- **Windows fix:** `node_modules/jest/bin/jest.js` called directly to avoid the bash shim in `node_modules/.bin/jest` (which Node cannot execute on Windows)
+- **Noise suppression:** `setLogLevel('error')` from `firebase/app` silences the Firebase SDK's WARN-level gRPC PERMISSION_DENIED messages that fire for every `assertFails` write test
+
+### What is tested (41 tests across 8 describe blocks)
+
+| Describe block | Tests | Key assertions |
+|---|---|---|
+| `/users/{uid}` | 6 | Owner + admin read ✓; other user / unauthenticated denied; ALL writes denied |
+| `/jobs/{jobId}` | 6 | Requester + assigned worker + admin read ✓; unrelated user denied; writes denied |
+| `/jobRequests/{requestId}` | 4 | Target worker + admin read ✓; different worker denied; writes denied |
+| `/ratings/{ratingId}` | 5 | Rater + ratee + admin read ✓; unrelated user denied; writes denied |
+| `/notifications/.../feed/...` | 7 | Owner read ✓; `isRead`-only update ✓; multi-field update denied; create / delete denied; other user denied |
+| `/disputes/{disputeId}` | 5 | Requester + worker + admin read ✓; unrelated user denied; writes denied |
+| `geocache` / `stripeEvents` | 5 | All client access denied — even admin |
+| Catch-all | 3 | Unknown collection read + write denied for admin and authenticated user |
+
+### Notes
+
+- `testEnv.withSecurityRulesDisabled()` used for seeding pre-existing documents (Admin SDK equivalent in tests)
+- `testEnv.clearFirestore()` called in `afterEach` for strict per-test isolation
+- `firebase/package.json` installed with `--legacy-peer-deps` due to peer dependency conflict between `@firebase/rules-unit-testing` v4 and `firebase-admin` v12
+
+### Test results
+
+```
+Test Suites: 1 passed, 1 total
+Tests:       41 passed, 41 total
+Time:        3.777 s
+```
+
+---
+
+## 2026-04-14 — Session: Frontend Vitest Tests (P1-28)
+
+### Context
+
+All backend testing was complete (112 unit tests, 13 integration tests, 41 Firestore rules tests). This session completed the final item on the testing backlog: frontend Vitest component tests.
+
+---
+
+### P1-28 — Frontend Vitest component tests
+
+**Setup (carried over from previous session):**
+- `frontend/vite.config.js` — added `test: { environment: 'jsdom', globals: true, setupFiles: ['./src/test/setup.js'] }`
+- `frontend/package.json` — added `"test": "vitest run"` and `"test:watch": "vitest"` scripts; devDependencies: `vitest`, `@testing-library/react`, `@testing-library/user-event`, `@testing-library/jest-dom`, `jsdom`
+- `frontend/src/test/setup.js` — `import '@testing-library/jest-dom'`
+
+**Test files written:**
+
+| File | Tests | Covers |
+|---|---|---|
+| `src/test/StatusPill.test.jsx` | 14 | All 11 known statuses, unknown status fallback, inline span element, no-throw |
+| `src/test/MockStateContext.test.jsx` | 13 | initial state (2), addJob (4), setJobStatus (4), advanceJob (3) |
+| `src/test/PostJob.test.jsx` | 8 | Step 1 validation + search state (4), Step 2 validation + price (2), Step 4 acknowledge + submit (2) |
+
+**Issue: Vitest 4.x + React 19 fake timer incompatibility**
+
+The PostJob tests were originally written using `vi.useFakeTimers()` + `userEvent.setup({ advanceTimers: vi.advanceTimersByTime })` to control the component's 1200ms/1800ms `setTimeout` calls in `nextStep1()`. All 6 timer-reliant tests timed out at 5000ms.
+
+Root cause: React 19's concurrent renderer uses its own scheduler (via `MessageChannel` in jsdom). When `vi.useFakeTimers()` intercepts `setTimeout`, React's `act()` — which waits for the scheduler to flush — can get stuck in a deadlock waiting for fake timers to advance while the test is waiting for `act` to complete. Neither unblocks the other.
+
+Switching to `{ delay: null }` in `userEvent.setup` (which avoids userEvent's internal typing delays) did not resolve the hang — confirming the issue was with React's scheduler, not userEvent's internal timing.
+
+**Fix:** Removed `vi.useFakeTimers()` entirely from PostJob tests. Replaced `advanceToStep2` helper with a real-timer `waitFor` approach:
+
+```js
+async function advanceToStep2(user) {
+  await user.type(screen.getByPlaceholderText(/123 Main Street/i), '42 Elm Street, Toronto, ON')
+  await user.click(screen.getByRole('button', { name: /next/i }))
+  await waitFor(
+    () => screen.getByText('What services do you need?'),
+    { timeout: 3000 }
+  )
+}
+```
+
+The 1800ms real timer fires naturally; `waitFor` polls until the step 2 heading appears. Per-test timeout capped at 5000ms (explicit) to make the intent clear. Total suite time is ~16 seconds (mostly jsdom startup + the real 1800ms waits).
+
+**Key note for future PostJob tests:** Do NOT use `vi.useFakeTimers()` with React 19 + Vitest 4.x unless using `{ toFake: [...] }` to carefully exclude things React's scheduler depends on (this is fragile). Real timers + `waitFor` are more reliable.
+
+### Test results
+
+```
+Test Files  3 passed (3)
+Tests       35 passed (35)
+Duration    16.72 s
+```
+
+### Testing backlog — COMPLETE
+
+| Layer | Test count | Status |
+|---|---|---|
+| Unit + controller (@WebMvcTest) | 112 | ✓ |
+| Integration (Firestore emulator) | 13 | ✓ |
+| Firestore security rules | 41 | ✓ |
+| Frontend Vitest | 35 | ✓ |
+| **Total** | **201** | **✓**
+```

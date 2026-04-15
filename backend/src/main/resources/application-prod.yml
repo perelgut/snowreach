@@ -4,6 +4,11 @@
 #
 # All secrets injected by Cloud Run from GCP Secret Manager.
 # Server port stays at 8080 (Cloud Run default).
+#
+# DO NOT put secret values in this file.  Sensitive config
+# (API keys, Firebase credentials, Stripe keys) must be stored
+# in GCP Secret Manager and injected as environment variables
+# via the Cloud Run --set-secrets flag in backend-deploy.yml.
 # ============================================================
 
 yosnowmow:
@@ -15,6 +20,30 @@ spring:
     job-store-type: memory          # Phase 1: in-memory is sufficient
                                     # Phase 2: migrate to Cloud SQL JDBC store
 
+# ── HTTP connector tuning ────────────────────────────────────────────────────
+# Cloud Run allocates 1 vCPU by default; 200 threads is well above that ceiling
+# but JVM thread overhead is negligible for this workload.  Raise if p99 latency
+# degrades under traffic beyond 2 vCPUs.
+server:
+  tomcat:
+    threads:
+      max: 200
+
+# ── Actuator ─────────────────────────────────────────────────────────────────
+# Never expose internal details (database credentials, env var names) in the
+# health response.  Cloud Run liveness/readiness probes only need the status
+# field — they do not read the components map.
+management:
+  endpoint:
+    health:
+      show-details: never
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+# Root level stays WARN to suppress noisy framework output.
+# Application code stays INFO — operational events (job transitions, payments,
+# matching) are logged at INFO and are important for production debugging.
+# Raise individual loggers to DEBUG temporarily via Cloud Run env vars if needed.
 logging:
   level:
-    com.yosnowmow: INFO
+    root:              WARN
+    com.yosnowmow:     INFO

@@ -19,7 +19,6 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  *   - CSRF disabled (not applicable to Bearer token REST APIs)
  *
  * Public endpoints (no token required):
- *   /api/health         — simple health check
  *   /actuator/**        — Spring Boot Actuator (health probe for Cloud Run)
  *   /webhooks/**        — Stripe and other incoming webhooks (verified by signature)
  *
@@ -48,7 +47,7 @@ public class SecurityConfig {
 
             // Public and protected path rules
             .authorizeHttpRequests(auth -> auth
-                    .requestMatchers("/api/health", "/actuator/**", "/webhooks/**").permitAll()
+                    .requestMatchers("/actuator/**", "/webhooks/**").permitAll()
                     .anyRequest().authenticated())
 
             // Run Firebase token verification before Spring's default auth filter

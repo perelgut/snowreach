@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.springframework.security.core.Authentication;
+
 /**
  * Servlet filter that runs once per request to verify Firebase ID tokens.
  *
@@ -65,6 +67,16 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain)
             throws ServletException, IOException {
+
+        // If a SecurityContext has already been populated upstream (e.g., by MockMvc's
+        // authentication() post-processor in tests), honour it and skip token verification.
+        // In production with STATELESS session management nothing upstream ever sets auth,
+        // so this short-circuit is harmless.
+        Authentication existingAuth = SecurityContextHolder.getContext().getAuthentication();
+        if (existingAuth != null && existingAuth.isAuthenticated()) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
         String authHeader = request.getHeader("Authorization");
 

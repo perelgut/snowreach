@@ -64,6 +64,7 @@ public class GeocodingService {
 
     static {
         // ── Toronto core ───────────────────────────────────────────────────
+        FSA_CENTROIDS.put("M5E", new double[]{43.6488,  -79.3732}); // Financial District / St. Lawrence
         FSA_CENTROIDS.put("M5V", new double[]{43.6426,  -79.3998}); // Downtown West
         FSA_CENTROIDS.put("M5G", new double[]{43.6579,  -79.3873}); // Hospital District
         FSA_CENTROIDS.put("M4Y", new double[]{43.6689,  -79.3872}); // Church-Wellesley

@@ -10,6 +10,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -110,6 +111,27 @@ public class GlobalExceptionHandler {
                 "Access Denied",
                 "You do not have permission to perform this action",
                 request.getRequestURI());
+    }
+
+    // ── ResponseStatusException — preserve the intended HTTP status ──────────
+    //
+    // IMPORTANT: this handler must exist, otherwise ResponseStatusException
+    // (thrown by service-layer code via `new ResponseStatusException(422, ...)`)
+    // falls through to the Exception catch-all below and is incorrectly returned
+    // as HTTP 500.  Spring's built-in resolver for ResponseStatusException only
+    // runs when @RestControllerAdvice has no matching handler — but the catch-all
+    // above prevents that fallback.
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, Object>> handleResponseStatus(
+            ResponseStatusException ex, HttpServletRequest request) {
+
+        HttpStatus status = HttpStatus.resolve(ex.getStatusCode().value());
+        if (status == null) {
+            status = HttpStatus.INTERNAL_SERVER_ERROR;
+        }
+        String detail = ex.getReason() != null ? ex.getReason() : "An error occurred";
+        return problem(status, status.getReasonPhrase(), detail, request.getRequestURI());
     }
 
     // ── 500 Internal Server Error — catch-all ─────────────────────────────

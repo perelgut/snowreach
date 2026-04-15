@@ -125,6 +125,22 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!--
+                      Env vars for the Firebase Auth Emulator — used by spring-boot:run only.
+                      When FIREBASE_AUTH_EMULATOR_HOST is set, FirebaseAuth.verifyIdToken()
+                      accepts the emulator's unsigned (alg:none) tokens instead of calling
+                      real Firebase servers.
+                      System.setProperty() does NOT work here — the Admin SDK reads
+                      System.getenv(), so it must be an actual OS-level env var.
+                      Setting it in environmentVariables achieves that for the child JVM
+                      process spawned by spring-boot:run.
+                      This has no effect on mvn test, mvn package, or the Docker build.
+                    -->
+                    <environmentVariables>
+                        <FIREBASE_AUTH_EMULATOR_HOST>localhost:9099</FIREBASE_AUTH_EMULATOR_HOST>
+                    </environmentVariables>
+                </configuration>
             </plugin>
         </plugins>
     </build>

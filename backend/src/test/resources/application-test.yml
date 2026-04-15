@@ -1,0 +1,72 @@
+# ============================================================
+# YoSnowMow — Test Profile Configuration (P1-22)
+#
+# This file is loaded when the "test" Spring profile is active,
+# i.e. in @SpringBootTest integration tests.
+#
+# Current unit tests use @ExtendWith(MockitoExtension.class)
+# which does NOT load a Spring context, so this file is NOT
+# loaded for those tests.  It is provided here for:
+#   1. Future integration tests against the Firebase Emulator
+#   2. Any @SpringBootTest slice tests added later
+#
+# To run integration tests with the Firestore emulator:
+#   firebase emulators:start --only firestore,auth
+#   mvn test -Dspring.profiles.active=test
+# ============================================================
+
+spring:
+  # Suppress the Spring Boot startup banner in test output
+  main:
+    banner-mode: "off"
+
+  # Quartz: use RAM-based job store for tests — no H2 schema needed,
+  # no persistence across test runs.
+  quartz:
+    job-store-type: memory
+    properties:
+      org.quartz.threadPool.threadCount: 1
+      org.quartz.scheduler.instanceName: YoSnowMowTestScheduler
+
+# ── Firebase Emulator ────────────────────────────────────────────────────────
+#
+# Integration tests tagged @Tag("integration") use these properties to
+# connect to the local Firebase Emulator Suite.  @WebMvcTest slice tests
+# never load FirebaseConfig (it is not a web-layer @Configuration), so
+# these values do not affect them.
+#
+# To run integration tests locally:
+#   firebase emulators:start --only firestore,auth
+#   mvn test   (integration tests auto-skip if emulator is not reachable)
+#
+# The "demo-" project-id prefix tells the Firebase SDK to operate in
+# offline mode — no real project credentials are needed.
+
+yosnowmow:
+  firebase:
+    project-id:          demo-yosnowmow
+    use-emulator:        true
+    emulator-host:       localhost:8080
+    audit-project-id:    demo-yosnowmow-audit
+
+  # ── Placeholder API keys ────────────────────────────────────────────────────
+  #
+  # External API calls (SendGrid, Stripe, Maps) are @MockBean in all tests.
+  # These values satisfy @Value injection without needing real credentials.
+  sendgrid:
+    api-key: test-sendgrid-key-placeholder
+    from-email: noreply@yosnowmow.test
+    from-name: YoSnowMow Test
+    bcc-email: ""
+  maps:
+    api-key: test-maps-key-placeholder
+  stripe:
+    secret-key: sk_test_placeholder
+    webhook-secret: whsec_test_placeholder
+
+# Suppress noisy framework logging; set com.yosnowmow to DEBUG if debugging tests.
+logging:
+  level:
+    root: WARN
+    com.yosnowmow: WARN
+    org.springframework.security: WARN
