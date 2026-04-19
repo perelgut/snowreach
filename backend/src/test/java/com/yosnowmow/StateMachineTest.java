@@ -44,7 +44,7 @@ import static org.mockito.Mockito.when;
  *   <li>Valid state transitions succeed and return the updated job</li>
  *   <li>Transitions not in the TRANSITIONS table throw {@link InvalidTransitionException}</li>
  *   <li>Actor permission enforcement (worker-only, requester-only, admin-only)</li>
- *   <li>Dispute window expiry (2 hours after COMPLETE)</li>
+ *   <li>Dispute window expiry (configurable hours after PENDING_APPROVAL)</li>
  *   <li>Terminal states (CANCELLED, SETTLED) cannot be transitioned</li>
  * </ul>
  *
@@ -55,7 +55,10 @@ import static org.mockito.Mockito.when;
  *
  * <p>Uses {@code LENIENT} strictness because the shared {@code @BeforeEach}
  * setup stubs methods that are not needed by every test (e.g. Quartz scheduler
- * for non-COMPLETE transitions).
+ * for non-PENDING_APPROVAL transitions).
+ *
+ * <p>Status names use the v1.1 negotiated-marketplace vocabulary:
+ * POSTED → NEGOTIATING → AGREED → ESCROW_HELD → IN_PROGRESS → PENDING_APPROVAL → RELEASED.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -91,7 +94,7 @@ class StateMachineTest {
     /**
      * Wires up the Firestore mock chain and instruments {@code runTransaction()}
      * to execute the transaction lambda synchronously using the mock Transaction.
-     * Also stubs the Quartz scheduler for tests that transition to COMPLETE.
+     * Also stubs the Quartz scheduler for tests that transition to PENDING_APPROVAL.
      */
     @BeforeEach
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -125,7 +128,7 @@ class StateMachineTest {
         // Inside the transaction body, tx.get(docRef) reads the job snapshot
         when(tx.get(jobDocRef)).thenReturn(ApiFutures.immediateFuture(jobDocSnap));
 
-        // Quartz — called for COMPLETE transitions (auto-release timer)
+        // Quartz — called for PENDING_APPROVAL transitions (auto-release timer)
         when(quartzScheduler.scheduleJob(any(), any())).thenReturn(new java.util.Date());
     }
 
@@ -146,13 +149,15 @@ class StateMachineTest {
     }
 
     /**
-     * Stubs the snapshot to return a COMPLETE job whose {@code completedAt}
+     * Stubs the snapshot to return a PENDING_APPROVAL job whose {@code pendingApprovalAt}
      * timestamp is {@code secondsAgo} seconds before now.
+     * Sets approvalWindowHours = 2 to match the spec default.
      */
-    private Job completedJobWithAge(long secondsAgo) {
-        Job job = jobInState("COMPLETE");
-        long completedSecs = Timestamp.now().getSeconds() - secondsAgo;
-        job.setCompletedAt(Timestamp.ofTimeSecondsAndNanos(completedSecs, 0));
+    private Job pendingApprovalJobWithAge(long secondsAgo) {
+        Job job = jobInState("PENDING_APPROVAL");
+        long pendingApprovalSecs = Timestamp.now().getSeconds() - secondsAgo;
+        job.setPendingApprovalAt(Timestamp.ofTimeSecondsAndNanos(pendingApprovalSecs, 0));
+        job.setApprovalWindowHours(2);
         return job;
     }
 
@@ -161,19 +166,19 @@ class StateMachineTest {
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("System actor: REQUESTED → PENDING_DEPOSIT succeeds")
-    void transition_systemActor_requestedToPendingDeposit_succeeds() {
-        jobInState("REQUESTED");
+    @DisplayName("Stripe actor: AGREED → ESCROW_HELD succeeds (automated payment confirmation)")
+    void transition_stripeActor_agreedToEscrowHeld_succeeds() {
+        jobInState("AGREED");
 
-        Job result = jobService.transition(JOB_ID, "PENDING_DEPOSIT", "system", false);
+        Job result = jobService.transition(JOB_ID, "ESCROW_HELD", "stripe", false);
 
-        assertThat(result.getStatus()).isEqualTo("PENDING_DEPOSIT");
+        assertThat(result.getStatus()).isEqualTo("ESCROW_HELD");
     }
 
     @Test
-    @DisplayName("Assigned worker: CONFIRMED → IN_PROGRESS succeeds")
-    void transition_assignedWorker_confirmedToInProgress_succeeds() {
-        jobInState("CONFIRMED");   // workerId = WORKER_ID
+    @DisplayName("Assigned worker: ESCROW_HELD → IN_PROGRESS succeeds")
+    void transition_assignedWorker_escrowHeldToInProgress_succeeds() {
+        jobInState("ESCROW_HELD");   // workerId = WORKER_ID
 
         Job result = jobService.transition(JOB_ID, "IN_PROGRESS", WORKER_ID, false);
 
@@ -181,20 +186,20 @@ class StateMachineTest {
     }
 
     @Test
-    @DisplayName("Assigned worker: IN_PROGRESS → COMPLETE succeeds")
-    void transition_assignedWorker_inProgressToComplete_succeeds() {
+    @DisplayName("Assigned worker: IN_PROGRESS → PENDING_APPROVAL succeeds")
+    void transition_assignedWorker_inProgressToPendingApproval_succeeds() {
         jobInState("IN_PROGRESS"); // workerId = WORKER_ID
 
-        Job result = jobService.transition(JOB_ID, "COMPLETE", WORKER_ID, false);
+        Job result = jobService.transition(JOB_ID, "PENDING_APPROVAL", WORKER_ID, false);
 
-        assertThat(result.getStatus()).isEqualTo("COMPLETE");
+        assertThat(result.getStatus()).isEqualTo("PENDING_APPROVAL");
     }
 
     @Test
-    @DisplayName("Requester: COMPLETE → DISPUTED within 2-hour window succeeds")
-    void transition_requester_completeToDisputed_withinWindow_succeeds() {
-        // Job was completed 30 minutes ago — well within the 2-hour dispute window
-        completedJobWithAge(30 * 60);
+    @DisplayName("Requester: PENDING_APPROVAL → DISPUTED within approval window succeeds")
+    void transition_requester_pendingApprovalToDisputed_withinWindow_succeeds() {
+        // Job submitted 30 minutes ago — well within the 2-hour approval window
+        pendingApprovalJobWithAge(30 * 60);
 
         Job result = jobService.transition(JOB_ID, "DISPUTED", REQUESTER_ID, false);
 
@@ -236,14 +241,14 @@ class StateMachineTest {
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("REQUESTED → COMPLETE is not in the transition table")
-    void transition_requestedToComplete_throwsInvalidTransition() {
-        jobInState("REQUESTED");
+    @DisplayName("POSTED → PENDING_APPROVAL is not in the transition table")
+    void transition_postedToPendingApproval_throwsInvalidTransition() {
+        jobInState("POSTED");
 
-        assertThatThrownBy(() -> jobService.transition(JOB_ID, "COMPLETE", "system", false))
+        assertThatThrownBy(() -> jobService.transition(JOB_ID, "PENDING_APPROVAL", "system", false))
             .isInstanceOf(InvalidTransitionException.class)
-            .hasMessageContaining("REQUESTED")
-            .hasMessageContaining("COMPLETE");
+            .hasMessageContaining("POSTED")
+            .hasMessageContaining("PENDING_APPROVAL");
     }
 
     @Test
@@ -271,9 +276,9 @@ class StateMachineTest {
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("A different worker cannot start a job assigned to another worker")
-    void transition_wrongWorker_confirmedToInProgress_throwsAccessDenied() {
-        jobInState("CONFIRMED");  // workerId = WORKER_ID
+    @DisplayName("A different worker cannot check in to a job assigned to another worker")
+    void transition_wrongWorker_escrowHeldToInProgress_throwsAccessDenied() {
+        jobInState("ESCROW_HELD");  // workerId = WORKER_ID
 
         assertThatThrownBy(() ->
             jobService.transition(JOB_ID, "IN_PROGRESS", "different-worker-uid", false))
@@ -281,11 +286,11 @@ class StateMachineTest {
     }
 
     @Test
-    @DisplayName("Requester cannot start a job (worker-only transition)")
-    void transition_requester_confirmedToInProgress_throwsAccessDenied() {
-        jobInState("CONFIRMED");  // workerId = WORKER_ID, requesterId = REQUESTER_ID
+    @DisplayName("Requester cannot check in to a job (worker-only transition)")
+    void transition_requester_escrowHeldToInProgress_throwsAccessDenied() {
+        jobInState("ESCROW_HELD");  // workerId = WORKER_ID, requesterId = REQUESTER_ID
 
-        // Requester tries to mark the job as in-progress — only the assigned Worker may do this
+        // Requester tries to start the job — only the assigned Worker may do this
         assertThatThrownBy(() ->
             jobService.transition(JOB_ID, "IN_PROGRESS", REQUESTER_ID, false))
             .isInstanceOf(AccessDeniedException.class);
@@ -293,8 +298,8 @@ class StateMachineTest {
 
     @Test
     @DisplayName("Worker cannot initiate a dispute — only the Requester may")
-    void transition_worker_completeToDisputed_throwsAccessDenied() {
-        completedJobWithAge(30 * 60);  // within window
+    void transition_worker_pendingApprovalToDisputed_throwsAccessDenied() {
+        pendingApprovalJobWithAge(30 * 60);  // within window
 
         assertThatThrownBy(() ->
             jobService.transition(JOB_ID, "DISPUTED", WORKER_ID, false))
@@ -327,22 +332,22 @@ class StateMachineTest {
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("COMPLETE → DISPUTED fails after the 2-hour dispute window expires")
-    void transition_requester_completeToDisputed_windowExpired_throwsInvalidTransition() {
-        // Job was completed 3 hours ago — the 2-hour dispute window has expired
-        completedJobWithAge(3 * 3600);
+    @DisplayName("PENDING_APPROVAL → DISPUTED fails after the approval window expires")
+    void transition_requester_pendingApprovalToDisputed_windowExpired_throwsInvalidTransition() {
+        // Job submitted 3 hours ago — the 2-hour approval window has expired
+        pendingApprovalJobWithAge(3 * 3600);
 
         assertThatThrownBy(() ->
             jobService.transition(JOB_ID, "DISPUTED", REQUESTER_ID, false))
             .isInstanceOf(InvalidTransitionException.class)
-            .hasMessageContaining("2-hour");
+            .hasMessageContaining("expired");
     }
 
     @Test
-    @DisplayName("COMPLETE → DISPUTED right at the boundary (2 hours exactly) is rejected")
-    void transition_requester_completeToDisputed_atBoundary_throwsInvalidTransition() {
-        // 2 hours + 1 second after completion — just past the window
-        completedJobWithAge(2 * 3600 + 1);
+    @DisplayName("PENDING_APPROVAL → DISPUTED right at the boundary (2 hours + 1 sec) is rejected")
+    void transition_requester_pendingApprovalToDisputed_atBoundary_throwsInvalidTransition() {
+        // 2 hours + 1 second after submission — just past the window
+        pendingApprovalJobWithAge(2 * 3600 + 1);
 
         assertThatThrownBy(() ->
             jobService.transition(JOB_ID, "DISPUTED", REQUESTER_ID, false))

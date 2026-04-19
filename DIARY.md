@@ -2879,3 +2879,1485 @@ Phase 1 development is underway. Backend is deployed to Cloud Run; frontend depl
 **Fix:** Replaced the inverted private-property guards with a module-level `firebase_emulatorsConnected` boolean that is set to `true` on first connection. All three emulator connections (Auth, Firestore, Storage) are now guarded by the same flag.
 
 **Verification:** Signed in as `requester@yosnowmow.test` and `worker@yosnowmow.test` — both succeed and land on the correct section.
+
+---
+
+## 2026-04-17 — Session: Phase 2 (P2-01 through P2-07)
+
+### Context
+
+Phase 1 was complete. This session implemented all seven tasks in Phase 2 — Structured Disputes. Work proceeded sequentially, each task building directly on the last. All backend changes were verified with `./mvnw compile -q` before moving on.
+
+---
+
+### P2-01 — Dispute Model & Service
+
+**Discussion:** The first dispute-related task. Goal was to create the Firestore `Dispute` model and a full `DisputeService` that handles opening, querying, and resolving disputes — and to wire `POST /api/jobs/{jobId}/dispute` in `JobController` to delegate to it.
+
+**Files created/modified:**
+
+| File | Change |
+|---|---|
+| `backend/.../model/Dispute.java` | New — Firestore model for `disputes/{disputeId}` collection with all fields: `disputeId`, `jobId`, `openedByUid`, `openedAt`, `status` (OPEN/RESOLVED), `resolution` (RELEASED/REFUNDED/SPLIT), `splitPercentageToWorker`, `requesterStatement`, `workerStatement`, `evidenceUrls`, `adminNotes`, `resolvedByAdminUid`, `resolvedAt` |
+| `backend/.../dto/DisputeRequest.java` | Replaced stub — `@NotBlank @Size(max=2000) String statement` |
+| `backend/.../dto/ResolveDisputeRequest.java` | New — `resolution` (RELEASED/REFUNDED/SPLIT), `splitPercentageToWorker` (0–100), `adminNotes` |
+| `backend/.../service/DisputeService.java` | New full implementation. `openDispute()` validates job status (COMPLETE or INCOMPLETE), 2-hour window from `completedAt`, unique dispute guard, writes Firestore dispute doc, calls `jobService.transition(→DISPUTED)`, updates job with `disputeId`, notifies both parties. `getDispute()` enforces party/admin access. `addStatement()` updates `requesterStatement` or `workerStatement`. `resolveDispute()` updates dispute to RESOLVED, calls the appropriate `PaymentService` method (which also handles the job state transition). |
+| `backend/.../controller/JobController.java` | Added `DisputeService` dependency; replaced stub `disputeJob` with full delegation to `disputeService.openDispute()` |
+| `backend/.../model/Job.java` | Added `disputeId` (String) and `stripeRefundId` (String) fields with getters/setters |
+
+**Key decisions:**
+
+- `DisputeService.resolveDispute()` does NOT call `jobService.transition()` separately after calling a payment method, because `releasePayment()`, `refundJob()`, and `splitPayment()` each call `transitionStatus()` internally. Calling it twice would fail on the second attempt (job already in terminal state).
+- The 2-hour dispute window is measured from `job.completedAt`, not from the current time. This is consistent with the spec.
+- A small race condition exists in `openDispute()`: two simultaneous requests could both pass the "job not already DISPUTED" check before either writes. Acceptable for Phase 2 given low frequency; noted in code comment.
+
+**Errors encountered and fixed:**
+
+- Initial `splitPayment()` implementation used `(netWorker + hst) × splitPct / 100` — proportional HST. This was incorrect; HST always flows to the Worker in full for CRA remittance. Fixed in P2-03.
+- `splitPayment()` initially used the fully-qualified class name `com.yosnowmow.model.User` inside the method body even though `User` was already imported. Fixed to use the short name.
+
+---
+
+### P2-02 — Evidence Upload
+
+**Discussion:** Added `POST /api/disputes/{disputeId}/evidence` to the dispute flow, and `uploadDisputeEvidence()` to `StorageService`.
+
+**Files modified:**
+
+| File | Change |
+|---|---|
+| `backend/.../service/StorageService.java` | Renamed constants (`MAX_FILE_BYTES` → `MAX_PHOTO_BYTES`, `ALLOWED_CONTENT_TYPES` → `ALLOWED_PHOTO_TYPES`). Added `MAX_EVIDENCE_BYTES = 20 MB`, `ALLOWED_EVIDENCE_TYPES = {image/jpeg, image/png, application/pdf}`. Added `uploadDisputeEvidence(disputeId, partyRole, file)` — validates MIME/size, uploads to `disputes/{disputeId}/{partyRole}/{uuid}.{ext}`, returns Firebase Storage download URL with embedded download token. |
+| `backend/.../controller/DisputeController.java` | New full implementation replacing stub. Added `POST /{disputeId}/evidence` endpoint. Determines caller party role by comparing `caller.uid()` against `job.requesterId` and `job.workerId`. Counts existing evidence per party by inspecting the `%2Frequester%2F` or `%2Fworker%2F` path segment in each Firebase Storage URL. Enforces 5-file cap per party. Atomically appends new URL to `dispute.evidenceUrls` via Firestore `FieldValue.arrayUnion`. |
+
+**Key decisions:**
+
+- Party evidence count is derived from the Firebase Storage URL path rather than a separate Firestore field. URLs encode the path as `disputes%2F{id}%2F{party}%2F…` so a `String.contains()` check suffices. This avoids adding extra Firestore fields for Phase 2.
+- Admins are explicitly blocked from uploading evidence (only job parties may). An admin who is not a party gets 403.
+
+---
+
+### P2-03 — Split Payment Formula Correction
+
+**Discussion:** The `splitPayment()` method written in P2-01 had an incorrect HST formula. Per the spec and for CRA remittance, HST must flow to the Worker in full regardless of the split percentage. The formula was corrected.
+
+**File modified:**
+
+| File | Change |
+|---|---|
+| `backend/.../service/PaymentService.java` | `splitPayment(jobId, workerPct)` replaced entirely. New formula: `workerAmountCents = round(netWorkerCents × workerPct / 100) + hstCents`. `requesterRefundCents = depositAmountCents - workerAmountCents`. Stripe Transfer for `workerAmountCents`, Stripe Refund for `requesterRefundCents`. Saves `stripeTransferId` and `stripeRefundId` to job. Audit logs `SPLIT_TRANSFER` and `SPLIT_REFUND`. Transitions job to RELEASED via `transitionStatus()`. Notifies both parties. |
+
+**Old formula (wrong):** `workerAmountCents = (netWorkerCents + hstCents) × workerPct / 100`
+
+**New formula (correct):** `workerAmountCents = round(netWorkerCents × workerPct / 100) + hstCents`
+
+The difference: in the old formula a 50/50 split gave the worker only 50% of HST, meaning 50% of HST was refunded to the Requester. The new formula always gives the Worker 100% of HST (as it must be remitted to CRA), and only splits the net service price.
+
+---
+
+### P2-04 — Admin Dispute Resolution UI
+
+**Discussion:** Wired the admin JobDetail page to the real dispute API. The P0 stub had a local-only "Admin Notes" card and placeholder action buttons. This task replaced it with a fully functional dispute panel.
+
+**Files modified:**
+
+| File | Change |
+|---|---|
+| `frontend/src/services/api.js` | Updated `disputeJob(jobId, reason)` → `disputeJob(jobId, statement)` (body `{ statement }`). Added `getDispute()`, `resolveDispute()`, `uploadEvidence()`, `addDisputeStatement()`. |
+| `frontend/src/pages/admin/JobDetail.jsx` | Complete rewrite of the dispute panel. Fetches `Dispute` document via `getDispute()` when `job.disputeId` is set. Evidence gallery with image lightbox (via `Modal`) and PDF download links — each labeled Requester/Worker by Firebase Storage URL path matching. Statement cards with colored left border (blue=Requester, purple=Worker). Resolution form: radio group (RELEASED/REFUNDED/SPLIT), split slider with live P2-03 formula preview (`workerSplitCAD = workerPayoutCAD × splitPct / 100 + hstAmountCAD`), admin notes textarea (min 20 chars), confirm modal. `applyResolve()` calls `resolveDispute(dispute.disputeId, { resolution, splitPercentageToWorker, adminNotes })` then explicitly reloads both job AND dispute. Success banner after resolution. Read-only resolved state shows resolution type, notes, and adminUid. Removed local-only Admin Notes stub card. |
+
+**Key decisions:**
+
+- Resolution values in the API are uppercase (`'RELEASED'`, `'REFUNDED'`, `'SPLIT'`) matching Java enum names. The P0 stub used lowercase. Updated throughout.
+- Dispute panel is displayed when `job.disputeId` is set (not just when `job.status === 'DISPUTED'`), so a resolved dispute's evidence and statements remain visible to admins.
+- The `loadDispute` useEffect watches `job?.disputeId` which doesn't change on resolution. Explicit `loadDispute(dispute.disputeId)` call in `applyResolve()` after `loadJob()` ensures the panel reflects the resolved state.
+
+---
+
+### P2-05 — Worker Concurrent Capacity
+
+**Discussion:** Phase 1 used a binary "is the worker busy?" check against a cached `activeJobCount` field. Phase 2 introduces configurable `capacityMax` (1–3) and replaces the stale-cache check with a live Firestore query.
+
+**Files created/modified:**
+
+| File | Change |
+|---|---|
+| `backend/.../dto/WorkerCapacityRequest.java` | New — `@Min(1) @Max(3) int maxConcurrentJobs` |
+| `backend/.../service/WorkerService.java` | Added `AuditLogService` constructor dependency. Added `updateCapacity(targetUid, callerUid, isAdmin, maxConcurrentJobs)`: access check (own UID or admin), qualification gate for > 1 (rating ≥ 4.0 AND completedJobCount ≥ 10), audit log `WORKER_CAPACITY_UPDATED` before write, updates `worker.capacityMax` in Firestore. |
+| `backend/.../controller/WorkerController.java` | Added `PATCH /api/users/{uid}/worker/capacity` endpoint. No `@RequiresRole` annotation — both worker (own UID) and admin are valid callers; service enforces the distinction. |
+| `backend/.../service/MatchingService.java` | Replaced `worker.getActiveJobCount() >= worker.getCapacityMax()` with a live Firestore query via new private method `countActiveJobsForWorker(workerUid)`: `WHERE workerId = uid AND status IN ['CONFIRMED', 'IN_PROGRESS']`. Updated class Javadoc to reflect the change. |
+
+**Key decisions:**
+
+- The live query in `countActiveJobsForWorker` replaces the cached counter to prevent stale data from allowing a Worker to receive an offer while already at their concurrent limit during rapid back-to-back dispatch windows. The cost is one extra Firestore query per worker candidate in each matching run — acceptable for Phase 2 volumes and because `matchAndStoreWorkers` is already `@Async`.
+- The `/api/users/{uid}/worker/capacity` path was chosen over the plan's `/api/workers/{uid}/capacity` for consistency with the existing `WorkerController` base path `/api/users`. The plan was written with `com.snowreach` package names and is a guideline, not a hard specification.
+- Validation message includes the worker's actual rating to make the rejection actionable: _"Current rating: 3.85"_.
+
+---
+
+### P2-06 — Analytics Data Pipeline
+
+**Discussion:** Daily aggregation pipeline that computes platform statistics for the previous calendar day and writes them to Firestore.
+
+**Files created/modified:**
+
+| File | Change |
+|---|---|
+| `backend/.../service/AnalyticsService.java` | New. `computeDailyStats(LocalDate)`: five Firestore queries scoped to Ontario midnight boundaries — (1) jobs with `completedAt` in range for revenue, (2) jobs with `cancelledAt`, (3) jobs with `disputeInitiatedAt`, (4) REQUESTER ratings by `createdAt`, (5) new users by `createdAt`. Writes to `analyticsDaily/{YYYY-MM-DD}` (idempotent via `set()`). Updates `analyticsSummary/current` in a Firestore transaction, maintaining `totalRatingStars` + `totalRatingCount` for a correct running `overallAverageRating`. `cleanupOldDailyStats()`: deletes `analyticsDaily` documents with `date` older than 90 days using lexicographic ISO date ordering. |
+| `backend/.../scheduler/AnalyticsJob.java` | New — `@DisallowConcurrentExecution` Quartz job. Fires at 3 AM daily. Calls `computeDailyStats(yesterday)` then `cleanupOldDailyStats()`. Throws `JobExecutionException(refireImmediately=false)` on failure. |
+| `backend/.../config/QuartzConfig.java` | Added `analyticsJobDetail()` and `analyticsTrigger()` beans. Cron `"0 0 3 * * ?"` — 3 AM daily, one hour after `auditIntegrityJob`. |
+
+**Key decisions:**
+
+- Two flat top-level Firestore collections (`analyticsDaily`, `analyticsSummary`) were chosen over a nested `analytics/daily/{date}` structure. The plan notation `analytics/daily/{date}` is ambiguous in Firestore (which requires alternating collection/document path segments), and flat collections are simpler to query.
+- Revenue formula: `platformRevenueCents = grossRevenueCents - workerPayoutsCents - hstCollectedCents`. Since `total = tier + hst` and `worker = tier × (1 - commission)`, the platform fee is `tier × commission = total - hst - worker`. The formula is algebraically correct for any commission rate.
+- Only REQUESTER-role ratings are used for `avgRating` in daily stats. These reflect Workers' service quality (the metric relevant to platform health). Worker-rated-Requester ratings are excluded.
+- The 90-day retention policy matches `AnalyticsService.RETENTION_DAYS` and `AdminController`'s 90-day cap on analytics queries.
+
+---
+
+### P2-07 — Analytics Dashboard
+
+**Discussion:** Frontend analytics page and two supporting backend endpoints to serve the data collected by P2-06.
+
+**Files modified:**
+
+| File | Change |
+|---|---|
+| `backend/.../controller/AdminController.java` | Added `GET /api/admin/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD`: validates date format/order/90-day cap, queries `analyticsDaily` by lexicographic `date` range, reads `analyticsSummary/current`, returns `{ dailyStats, summary }`. Added `GET /api/admin/workers?size=10`: queries users ordered by `worker.completedJobCount` desc (requires Firestore composite index); returns `{ uid, name, completedJobCount, rating }` per Worker. |
+| `frontend/src/services/api.js` | Added `getAdminAnalytics(from, to)`, `getTopWorkers(size)`, `exportTransactions(from, to)` (blob download for P3-07 CSV export). |
+| `frontend/src/pages/admin/Analytics.jsx` | Full implementation replacing the P1-19 stub. Date range picker defaulting to last 30 days / yesterday; auto-fetches on change. Three Chart.js charts via `react-chartjs-2`: (a) dual-y-axis line chart — jobs completed (left axis, blue) and gross revenue in CAD (right axis, green) by day; (b) stacked bar chart — completed/cancelled/disputed outcomes grouped by week (ISO week start = Monday); (c) pie chart — all-time platform revenue / worker payouts / HST. Three all-time stat cards (Total Jobs, Gross Revenue with Platform sub-line, Avg Rating). Top Workers table (name / jobs completed / avg rating). Export CSV button — calls P3-07 endpoint; shows graceful "not yet available" message on 404. `NoData` placeholder shown for charts when the date range has no analytics data yet. |
+
+**Dependencies installed:**
+
+```
+chart.js 4.x, react-chartjs-2 5.x
+```
+
+**Key decisions:**
+
+- Chart.js CSS variables cannot be used inside chart option objects (the chart renders to a `<canvas>` via JavaScript, not the DOM). All chart colours are hardcoded hex values matching the design token values: `#1A6FDB` (blue), `#27AE60` (green), `#E74C3C` (red), `#F39C12` (amber), `#8E44AD` (purple).
+- Weekly grouping for the bar chart is computed client-side by finding the Monday of each day's ISO week. This avoids adding a week-aggregation layer to the backend.
+- `toDate` defaults to yesterday (not today) because `AnalyticsJob` runs at 3 AM and processes the *previous* day. Today's stats won't be available until 3 AM tomorrow.
+- All-time HST is derived in the frontend as `totalGross - totalPlatform - totalWorker` rather than stored separately in the summary document. The formula holds because the three revenue components are exhaustive (every cent of a job payment goes to exactly one of: platform fee, worker payout, or HST).
+- The export button is fully wired to call the P3-07 backend endpoint. It fails gracefully with a user-visible message if the endpoint returns 404 (i.e., P3-07 not yet implemented). No special feature-flagging is needed.
+
+---
+
+## P2-08 — Platform Health Monitoring
+**Date:** 2026-04-17
+**Status:** Complete
+
+### Objective
+Expose a `/api/health` endpoint with sub-component indicators for Firestore and Quartz so Cloud Run can use it as a liveness probe and GCP Monitoring can fire alerts when the platform degrades.
+
+### Files created
+- `backend/src/main/java/com/yosnowmow/config/HealthConfig.java` — `@Configuration` with two `@Bean` Spring Boot Actuator `HealthIndicator` lambdas
+
+### Files modified
+- `backend/src/main/resources/application.yml` — added `management.endpoint.health.show-components: always` to surface sub-components in the health response
+- `docs/runbook.md` — full rewrite from placeholder to complete 9-section on-call runbook
+
+### HealthConfig.java detail
+
+Two beans, both registered under the Spring Boot Actuator naming convention (the Actuator strips the `HealthIndicator` suffix to derive the component key):
+
+**`firebaseHealthIndicator` → `components.firebase`**
+- Attempts a lightweight document read on `_health/ping` with a 5-second timeout
+- A "document not found" (no error) response counts as UP — the document does not need to exist
+- Returns DOWN with detail on TimeoutException or any other Exception; logs a WARN in both cases
+- Conservative 5-second timeout prevents a slow Firestore response from triggering Cloud Run's 3-consecutive-failure restart policy
+
+**`quartzHealthIndicator` → `components.quartz`**
+- Checks `scheduler.isStarted()` — returns DOWN with `"quartz": "not started"` if false
+- Checks `scheduler.isInStandbyMode()` — returns DOWN with `"quartz": "in standby mode"` if true
+- Returns UP with `schedulerName` and `"status": "running"` if both checks pass
+- Catches `SchedulerException` and returns DOWN with error detail
+
+### application.yml change
+
+Added `show-components: always` alongside the existing `show-details: always`:
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always
+      show-components: always   # surfaces firebase + quartz sub-components in /api/health
+```
+
+Without `show-components: always`, Spring Boot Actuator collapses sub-component details into the top-level status and omits the `components` map from the JSON response.
+
+### docs/runbook.md — complete rewrite
+
+The previous runbook was a placeholder. The new runbook has 9 sections:
+
+1. **Service Overview** — critical path priority table; environment URLs
+2. **Health Endpoint** — sample JSON response; Cloud Run liveness probe behaviour (10-second interval, 3 failures → restart)
+3. **GCP Monitoring Setup** — full `gcloud` command sequence for:
+   - Uptime check (`gcloud monitoring uptime-checks create https`) hitting `/api/health` every 60 seconds from 3 regions (USA, Europe, Asia-Pacific)
+   - Notification channel (email to `perelgut@gmail.com`)
+   - Alert policy: uptime check failure (2 consecutive failures ≈ 2 minutes of downtime)
+   - Alert policy: 5xx error rate > 1% over 5-minute window
+   - Alert policy: P99 latency > 2000 ms over 5-minute window
+4. **Alert Triage** — step-by-step playbook for each alert type (API Down, Firestore DOWN, Quartz DOWN, Error Rate, Latency)
+5. **Manual Operations** — `curl` commands for force-release, refund, status override; Admin Dashboard navigation steps
+6. **Rollback Procedure** — `gcloud run revisions list` + `gcloud run services update-traffic` to pin traffic to a specific revision
+7. **Log Queries** — `gcloud logging read` commands for errors, Stripe webhooks, Quartz job executions
+8. **Escalation** — contact table for each scenario (API down, Stripe failure, Firebase outage, suspected breach)
+9. **GCP Console Links** — direct links to Cloud Run, Firestore, Monitoring, Logs Explorer, Secret Manager, IAM
+
+### Key decisions
+
+- **`_health/ping` does not need to exist.** The Firestore Admin SDK returns a normal empty-document response (not an error) when a document is absent. This avoids the need to pre-create the document in the database and eliminates any risk of the health indicator going DOWN due to a missing document after a database reset.
+- **5-second timeout on Firestore ping.** Cloud Run's liveness probe interval is 10 seconds; 3 consecutive failures trigger a restart. A 5-second timeout leaves sufficient margin and prevents a briefly-slow Firestore response from cascading into an unnecessary container restart loop.
+- **Runbook stored in `docs/runbook.md` (not inside `backend/`).** Ops procedures are documentation artifacts, not code. Keeping them in `docs/` makes them easier to find and edit independently of the backend build.
+- **Three alert thresholds chosen for Phase 2 scale:**
+  - Uptime: 2 consecutive failures (≈ 2 min downtime) balances false-positive noise vs. response time
+  - Error rate: > 1% over 5 min — tight enough to catch real incidents before customers notice widespread failures
+  - P99 latency: > 2000 ms over 5 min — aligns with typical human tolerance for synchronous UI operations
+
+### Compile result
+`./mvnw compile -q` — clean, no errors or warnings.
+
+### Process note
+Diary written immediately after compile per standing rule. No batching.
+
+---
+
+## Test Suite Update — Phase 2 Coverage
+**Date:** 2026-04-17
+**Status:** Complete
+
+### Objective
+Audit and fix the test suite to reflect all Phase 2 backend changes. The suite had regressed from 139 passing tests to 124 passing + 25 failures.
+
+### Root causes found
+
+**Regression 1: `JobControllerTest` — 17 context-load errors**
+`JobController` gained a `DisputeService` constructor parameter (added when dispute handling was fleshed out during Phase 2). `JobControllerTest` never had a matching `@MockBean DisputeService disputeService`. Spring's `@WebMvcTest` context tried to instantiate `JobController` and failed with `UnsatisfiedDependencyException` — all 17 tests errored before any test logic ran.
+
+Fix: Added `@MockBean private DisputeService disputeService`.
+
+**Regression 2: `MatchingServiceTest` — 8 test failures**
+P2-05 replaced the cached `activeJobCount >= capacityMax` check with a live Firestore query (`countActiveJobsForWorker`). The method calls:
+```java
+firestore.collection("jobs").whereEqualTo("workerId", uid).whereIn("status", [...]).get().get()
+```
+The test's `jobsCollection` mock had `document(anyString())` stubbed but NOT `whereEqualTo(...)`. Mockito returned null for the unstubbed call; `null.whereIn(...)` threw NPE. The NPE was silently swallowed by `matchAndStoreWorkers`'s outer `catch (Exception e)`, so the `jobDocRef.update(...)` call that the test expected was never reached.
+
+Fix: Added mock fields `capacityCheckQuery` and `capacityCheckSnap`, and wired the chain in `setUp()` with default `capacityCheckSnap.size()` returning 0 (worker has capacity).
+
+**Stale test: `disputeJob_asRequester_returns200`**
+The endpoint signature changed during Phase 2: it now calls `disputeService.openDispute()` (not `jobService.transition()`), returns HTTP 201 (not 200), and requires a `@RequestBody DisputeRequest` with a mandatory `statement` field. The test was sending no body and expecting 200.
+
+Fix: Rewrote the test — sends `{"statement": "..."}`, stubs `disputeService.openDispute(...)`, expects 201 CREATED.
+
+### New tests added
+
+**`MatchingServiceTest` — capacity enforcement (P2-05)**
+- `matching_workerAtCapacity_isExcluded()` — worker with `capacityMax=1` and 1 live active job is excluded
+- `matching_workerBelowCapacity_isIncluded()` — worker with `capacityMax=2` and 1 live active job is included
+
+**`WorkerControllerTest` — capacity endpoint (P2-05)**
+4 new tests for `PATCH /api/users/{uid}/worker/capacity`:
+- Worker updating own capacity → 200, `updateCapacity(uid, uid, false, n)` called
+- Admin updating another worker's capacity → 200, `updateCapacity(uid, adminUid, true, n)` called
+- `maxConcurrentJobs=0` (below `@Min(1)`) → 400 (Bean Validation)
+- `maxConcurrentJobs=4` (above `@Max(3)`) → 400 (Bean Validation)
+
+**`AdminControllerTest` — analytics/workers role enforcement (P2-07)**
+2 new role-check tests:
+- `GET /api/admin/analytics?from=...&to=...` without admin role → 403
+- `GET /api/admin/workers` without admin role → 403
+
+**`HealthIndicatorTest` (new file — P2-08)**
+`src/test/java/com/yosnowmow/config/HealthIndicatorTest.java` — 7 tests covering all indicator branches:
+- Firebase UP (Firestore ping succeeds — deep-stub default)
+- Firebase DOWN on TimeoutException
+- Firebase DOWN on ExecutionException
+- Quartz UP (started, not in standby, returns schedulerName)
+- Quartz DOWN when `!scheduler.isStarted()`
+- Quartz DOWN when `scheduler.isInStandbyMode()`
+- Quartz DOWN when `SchedulerException` thrown from `isStarted()`
+
+Key design note: `pingDocRef` uses `@Mock(answer = Answers.RETURNS_DEEP_STUBS)` so the two-level chain `pingDocRef.get().get(5, SECONDS)` can be stubbed directly per test. A plain `@Mock` would return null for `get()`, causing NPE at `.get(5, SECONDS)`.
+
+### Final test counts
+
+| Class | Tests before | Tests after |
+|---|---|---|
+| `HealthIndicatorTest` (new) | 0 | 7 |
+| `AdminControllerTest` | 9 | 11 |
+| `JobControllerTest` | 17 errors | 17 pass |
+| `MatchingServiceTest` | 8 fail | 11 pass |
+| `WorkerControllerTest` | 5 | 9 |
+| All others | unchanged | unchanged |
+| **Total** | **124 pass + 25 fail** | **139 pass** |
+
+### Files modified
+- `src/test/java/com/yosnowmow/controller/JobControllerTest.java`
+- `src/test/java/com/yosnowmow/MatchingServiceTest.java`
+- `src/test/java/com/yosnowmow/controller/WorkerControllerTest.java`
+- `src/test/java/com/yosnowmow/controller/AdminControllerTest.java`
+
+### Files created
+- `src/test/java/com/yosnowmow/config/HealthIndicatorTest.java`
+
+---
+
+## P3-01 — Certn Background Check API Integration
+**Date:** 2026-04-17
+**Status:** Complete
+
+### Objective
+Integrate the Certn background check API so Workers can submit a criminal-record check and have their account automatically activated (or flagged for admin review) when the result arrives via webhook.
+
+### Files created
+- `backend/src/main/java/com/yosnowmow/dto/BackgroundCheckConsentRequest.java` — DTO with `@AssertTrue consented` field
+- `backend/src/main/java/com/yosnowmow/service/BackgroundCheckService.java` — full background check lifecycle service
+
+### Files modified
+- `backend/src/main/java/com/yosnowmow/model/WorkerProfile.java` — added `certnOrderId` (String) and `isActive` (boolean) fields with getters/setters; updated `backgroundCheckStatus` Javadoc to reflect P3-01 status values
+- `backend/src/main/java/com/yosnowmow/service/NotificationService.java` — added 4 new `@Async` notification methods: `sendBackgroundCheckApproved`, `sendBackgroundCheckFailed`, `notifyAdminBackgroundCheckReview`, `notifyAdminBackgroundCheckFailed`
+- `backend/src/main/java/com/yosnowmow/controller/WebhookController.java` — added `BackgroundCheckService` constructor param, `POST /webhooks/certn` endpoint, `computeHmacSha256` helper, `parseMinimalJson` helper
+- `backend/src/main/java/com/yosnowmow/controller/WorkerController.java` — added `BackgroundCheckService` constructor param, `POST /api/users/{uid}/worker/background-check` endpoint
+- `backend/src/main/resources/application.yml` — added `yosnowmow.certn` section (api-key, api-url, webhook-secret)
+- `backend/src/test/java/com/yosnowmow/controller/WebhookControllerTest.java` — added `@MockBean BackgroundCheckService`
+- `backend/src/test/java/com/yosnowmow/controller/WorkerControllerTest.java` — added `@MockBean BackgroundCheckService`
+
+### BackgroundCheckService detail
+
+**`submitBackgroundCheck(workerUid)`:**
+1. Fetches User from Firestore; throws 409 Conflict if status is already SUBMITTED, CLEAR, or CONSIDER (idempotency guard)
+2. Builds Certn applicant payload: `{ first_name, last_name, email, package: "criminal_record" }`
+3. POSTs to `${yosnowmow.certn.api-url}/applicants/` using `RestClient` (Spring Boot 3.2+ replacement for RestTemplate) with `Authorization: Token <api-key>` header
+4. Extracts `id` from response → stores as `worker.certnOrderId`
+5. Writes audit log `BACKGROUND_CHECK_SUBMITTED`, then updates Firestore: `worker.certnOrderId`, `worker.backgroundCheckStatus=SUBMITTED`, `worker.backgroundCheckDate`
+
+**`handleCertnWebhook(certnOrderId, certnResult)`:**
+1. Queries Firestore `users` where `worker.certnOrderId == orderId` to find the Worker
+2. Maps Certn result: `PASS→CLEAR`, `REVIEW→CONSIDER`, `FAIL→SUSPENDED`; unknown results default to CONSIDER with a WARN log
+3. Writes audit log `BACKGROUND_CHECK_RESULT`
+4. **CLEAR**: sets `worker.isActive=true`, sends approval email to Worker
+5. **CONSIDER**: writes to `adminReviewQueue/{workerUid}` collection, notifies Admin by email
+6. **SUSPENDED**: sets `worker.isActive=false`, sends failure email to Worker + FYI to Admin
+
+### WebhookController Certn endpoint
+
+`POST /webhooks/certn` — unauthenticated (Certn has no Firebase token; integrity verified by HMAC).
+
+Security: When `certnWebhookSecret` is not a placeholder, HMAC-SHA256 of the raw request body is computed and compared against the `X-Certn-Signature` header (lowercase hex). Signature mismatch → 400.
+
+During development (placeholder secret), the HMAC check is skipped — this matches the dev-only pattern used for Stripe (where the emulator also bypasses verification).
+
+Parses the JSON body for `id` (order ID) and `result` fields; delegates to `BackgroundCheckService.handleCertnWebhook()`.
+
+### WorkerController background-check endpoint
+
+`POST /api/users/{uid}/worker/background-check` — no `@RequiresRole`; authorization enforced in-method: caller must be the Worker (uid match) or an admin. Returns 202 Accepted (async — result arrives via webhook).
+
+### Key decisions
+
+- **`RestClient` over `RestTemplate`**: Spring Boot 3.2 introduced `RestClient` as the non-reactive, non-deprecated HTTP client. `RestTemplate` is in maintenance mode. No new dependencies required — `spring-boot-starter-web` already includes it.
+- **202 Accepted for submission**: The background check is asynchronous — submitting to Certn only initiates it. The result comes back hours or days later via webhook. 202 is semantically correct; a 200 would imply the check is already complete.
+- **`worker.isActive` field**: This field controls whether a Worker is eligible for job dispatch in `MatchingService`. It defaults to `false` (new Workers are inactive until their background check clears). Admins can also set it directly via P3-06 enhanced admin controls.
+- **`adminReviewQueue` collection**: When Certn returns `REVIEW`, the Worker is not automatically activated or suspended — the Admin must decide. The collection surfaces these cases in the Admin Dashboard (to be built in P3-06).
+- **HMAC verification skipped in dev**: The `certnWebhookSecret` placeholder check (`!certnWebhookSecret.startsWith("placeholder")`) mirrors the Stripe pattern and allows testing webhooks locally without a secret.
+
+### Compile errors found and fixed
+- `Map<?, ?>` wildcard type on `certnResponse` in `BackgroundCheckService` caused "incompatible types" on `getOrDefault()` call — fixed by casting to `Map<String, Object>` with `@SuppressWarnings("unchecked")`
+- Same issue in `WebhookController.handleCertnEvent` — changed `Map<?, ?> body` to `Map<String, Object>` and updated `parseMinimalJson` return type accordingly
+
+### Test regressions fixed
+- `WebhookControllerTest` (9 context errors) — missing `@MockBean BackgroundCheckService`; added
+- `WorkerControllerTest` (9 context errors) — missing `@MockBean BackgroundCheckService`; added
+
+### Final test result
+139 tests, 0 failures.
+
+---
+
+## P3-02 — Background Check Status Flow
+**Date:** 2026-04-17
+**Status:** Complete
+
+### Objective
+Complete the Certn background check lifecycle started in P3-01 by adding:
+1. The Admin override decision path (approve/reject Workers in CONSIDER state)
+2. Admin endpoints to list the review queue and record decisions
+3. A Worker-accessible status endpoint
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `backend/.../service/NotificationService.java` | Added `sendBackgroundCheckRejected(workerUid)` — emails the Worker that their Admin-reviewed application was not approved; follows same pattern as `sendBackgroundCheckFailed` but with distinct messaging ("application not approved" vs "account suspended") because the REJECTED state is a deliberate Admin decision, not an automated Certn FAIL. |
+| `backend/.../controller/AdminController.java` | Added `BackgroundCheckService` as 4th constructor parameter. Added `GET /api/admin/review-queue` — queries `adminReviewQueue` collection ordered by `createdAt` ascending; returns list of review-queue documents. Added `POST /api/admin/workers/{uid}/background-check-decision` — accepts `BackgroundCheckDecisionRequest` (decision + reason), delegates to `backgroundCheckService.adminOverride()`. Both endpoints require `@RequiresRole("admin")`. |
+| `backend/.../controller/WorkerController.java` | Added `GET /api/users/{uid}/worker/background-check-status` — fetches Worker via `workerService.getWorkerUser(uid)`, returns `{ backgroundCheckStatus, isActive }` map. Authorization enforced in-method: only the Worker (uid match) or an Admin may call it. Imports added: `GetMapping`, `WorkerProfile`, `HashMap`, `Map`. |
+| `backend/src/test/.../AdminControllerTest.java` | Added `@MockBean BackgroundCheckService backgroundCheckService` — required because `AdminController` now has `BackgroundCheckService` as a 4th constructor param; `@WebMvcTest` context fails to load without a matching mock. |
+
+### BackgroundCheckService.adminOverride detail
+
+The method added in P3-01's `BackgroundCheckService` now compiles fully:
+
+1. Fetches the Worker User document (throws 404 if not found)
+2. Guards: status must be `CONSIDER` (throws 409 Conflict otherwise)
+3. Maps decision → `APPROVED→CLEAR`, `REJECTED→REJECTED`
+4. Builds Firestore updates: `backgroundCheckStatus`, `backgroundCheckDate`, `isActive` (true/false), `updatedAt`
+5. Writes audit log `BACKGROUND_CHECK_ADMIN_OVERRIDE` with `adminUid`, `decision + reason` as detail
+6. Updates Firestore Worker document
+7. Deletes `adminReviewQueue/{workerUid}` document (removes from queue)
+8. Sends `sendBackgroundCheckApproved` or `sendBackgroundCheckRejected` to the Worker
+
+### Key decisions
+
+- **`REJECTED` as a separate status from `SUSPENDED`**: `SUSPENDED` = automated Certn FAIL, `REJECTED` = Admin decided against CONSIDER. Keeping them distinct allows the Admin Dashboard to distinguish automated failures from deliberate admin decisions and potentially expose different messaging to the Worker.
+- **`sendBackgroundCheckRejected` separate from `sendBackgroundCheckFailed`**: `FAILED` implies an automated check result; `REJECTED` implies a human decision. Different email subjects and tone avoid confusing the Worker about who made the decision.
+- **`GET /api/admin/review-queue` returns raw Firestore data maps**: The review queue documents are small and stable (workerUid, certnOrderId, certnResult, status, createdAt). Defining a separate DTO class for a 5-field read-only document adds boilerplate with no benefit. Jackson serializes `Map<String, Object>` cleanly.
+- **`GET /api/users/{uid}/worker/background-check-status` in WorkerController, not AdminController**: The Worker needs to poll this endpoint from their dashboard. Placing it in `/api/users/{uid}/…` is consistent with all other Worker-visible user data; Admin access is granted by the in-method auth check.
+
+### Test regression fixed
+
+`AdminControllerTest` — 11 context-load errors after `AdminController` gained `BackgroundCheckService` as a 4th constructor parameter. Fixed by adding `@MockBean private BackgroundCheckService backgroundCheckService` (identical pattern to the WebhookControllerTest and WorkerControllerTest fixes made in P3-01).
+
+### Compile and test results
+
+`./mvnw compile -q` — clean, no errors.
+`./mvnw test` — **139 tests, 0 failures, 0 errors.**
+
+---
+
+## P3-03 — Insurance Declaration
+**Date:** 2026-04-17
+**Status:** Complete
+
+### Objective
+Allow Workers to upload a PDF insurance certificate, have Admins verify/reject it, and automatically manage the annual renewal cycle (reminders and expiry deactivation).
+
+### Files created
+
+| File | Purpose |
+|---|---|
+| `backend/.../service/InsuranceService.java` | Full lifecycle: `uploadInsuranceDoc()` + `adminVerifyInsurance()` |
+| `backend/.../scheduler/InsuranceRenewalJob.java` | Daily Quartz job — expiry checks + reminder sends |
+| `backend/.../dto/InsuranceVerifyRequest.java` | `boolean approved` DTO for admin verify endpoint |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `backend/.../model/WorkerProfile.java` | Added 3 new fields: `insuranceStatus` (String), `insuranceDocUrl` (String), `lastInsuranceReminderSent` (Timestamp); plus getters/setters |
+| `backend/.../service/StorageService.java` | Added `uploadInsuranceDoc(workerUid, file)` — PDF-only, 20 MB cap, path `workers/{uid}/insurance/{uuid}.pdf` |
+| `backend/.../service/NotificationService.java` | Added 5 `@Async` methods: `notifyAdminInsuranceSubmitted`, `sendInsuranceApproved`, `sendInsuranceRejected`, `sendInsuranceRenewalReminder`, `sendInsuranceExpired` |
+| `backend/.../controller/WorkerController.java` | Added `InsuranceService` constructor param; added `POST /api/users/{uid}/worker/insurance` (multipart: file + expiryDate); imports: `GetMapping→RequestParam`, `MultipartFile`, `LocalDate`, `DateTimeParseException` |
+| `backend/.../controller/AdminController.java` | Added `InsuranceService` constructor param; added `POST /api/admin/workers/{uid}/insurance-verify`; imports: `InsuranceVerifyRequest`, `InsuranceService` |
+| `backend/.../config/QuartzConfig.java` | Added `insuranceRenewalJobDetail()` bean and `insuranceRenewalTrigger()` cron at `"0 0 4 * * ?"` (4 AM daily) |
+| `backend/src/test/.../WorkerControllerTest.java` | Added `@MockBean InsuranceService insuranceService` |
+| `backend/src/test/.../AdminControllerTest.java` | Added `@MockBean InsuranceService insuranceService` |
+
+### InsuranceService detail
+
+**`uploadInsuranceDoc(workerUid, file, expiryDate)`:**
+1. Guards: expiry date must be in the future (400 otherwise)
+2. Delegates to `StorageService.uploadInsuranceDoc()` (validates PDF MIME, 20 MB limit, uploads, returns download URL)
+3. Updates Firestore: `worker.insuranceDocUrl`, `worker.insuranceStatus=PENDING_REVIEW`, `worker.insurancePolicyExpiry` (ISO string), `worker.insuranceDeclaredAt`
+4. Audit log `INSURANCE_SUBMITTED`
+5. Notifies Admin via `notifyAdminInsuranceSubmitted`
+
+**`adminVerifyInsurance(workerUid, approved, adminUid)`:**
+1. Guards: status must be `PENDING_REVIEW` (409 otherwise)
+2. `approved=true` → `VALID`; `approved=false` → `NONE` + clears `insuranceDocUrl`
+3. Audit log `INSURANCE_VERIFIED`
+4. Notifies Worker via `sendInsuranceApproved` or `sendInsuranceRejected`
+
+### InsuranceRenewalJob detail
+
+Fires daily at 4 AM. Queries `users` where `worker.insuranceStatus IN [VALID, EXPIRING_SOON]`.
+
+Per Worker:
+- Parse `worker.insurancePolicyExpiry` as `LocalDate` (ISO string); skip and warn if unparseable
+- **Expired** (`expiryDate <= today`): set `EXPIRED` + `isActive=false`; audit `INSURANCE_EXPIRED`; email Worker
+- **Expiring soon** (`expiryDate <= today + 30 days`): set `EXPIRING_SOON` (idempotent); send reminder email only if `lastInsuranceReminderSent` is null or >7 days ago; update `lastInsuranceReminderSent` when sending; audit `INSURANCE_EXPIRING_SOON`
+
+### Key decisions
+
+- **`insurancePolicyExpiry` stays a String (ISO-8601 YYYY-MM-DD)**: The existing model field is already a String. `LocalDate.parse()` and `.toString()` handle the conversion cleanly. Firestore Timestamps would add complexity for a field that is only ever compared as a date (no time needed).
+- **`lastInsuranceReminderSent` field for dedup**: Rather than querying sent emails or using a separate `remindersSent` collection, a single Timestamp field on the Worker profile is sufficient. The 7-day check in the job is a simple arithmetic comparison.
+- **Admin insurance verify in `AdminController` (not `WorkerController`)**: Consistent with the `POST /api/admin/workers/{uid}/background-check-decision` pattern from P3-02. Both are admin adjudication actions against a Worker; keeping them together in `AdminController` makes the admin API surface cohesive.
+- **Upload returns 202 Accepted**: Like the background check submission, the result of an insurance upload is not immediate — Admin review is asynchronous. 202 is semantically correct.
+- **`expiryDate` passed as a `@RequestParam` in the multipart form**: Multipart requests don't support a mixed JSON body + file part. The simplest approach is two `@RequestParam` values (`file` and `expiryDate`). The controller validates the ISO date format and fails with 400 if malformed.
+- **No `@RequiresRole` on the upload endpoint**: Authorization is enforced in-method (own UID or admin), identical to the background-check upload pattern.
+- **Storage path `workers/{uid}/insurance/{uuid}.pdf`**: Firebase Storage rules can be scoped to `workers/{uid}/insurance/**` to allow the Worker to read their own doc URL. The UUID prevents path enumeration.
+
+### Test regressions fixed (same pattern as P3-02)
+
+- `AdminControllerTest` (11 context errors): `AdminController` now has `InsuranceService` as 5th constructor param — added `@MockBean InsuranceService insuranceService`
+- `WorkerControllerTest` (9 context errors): `WorkerController` now has `InsuranceService` as 3rd constructor param — added `@MockBean InsuranceService insuranceService`
+
+### Compile and test results
+
+`./mvnw compile` — **BUILD SUCCESS**, no errors.
+`./mvnw test` — **139 tests, 0 failures, 0 errors.**
+
+---
+
+## P3-04 — Trust Badge System
+**Date:** 2026-04-17
+**Status:** Complete
+
+### Objective
+Award and revoke trust badges on Worker profiles automatically (based on eligibility criteria) and manually (Admin override). Expose badges via the API and display them in the frontend `WorkerProfile.jsx`.
+
+### Files created
+
+| File | Purpose |
+|---|---|
+| `backend/.../service/BadgeService.java` | Core badge logic: `evaluateBadges()`, `adminGrantBadge()`, `adminRevokeBadge()`, `getActiveBadges()` |
+| `backend/.../dto/BadgeRevocationRequest.java` | `@NotBlank String reason` DTO for the admin revoke endpoint |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `backend/.../service/RatingService.java` | Added `BadgeService` as 4th constructor param; call `badgeService.evaluateBadges(workerUid)` after rating update to re-evaluate TOP_RATED and EXPERIENCED thresholds |
+| `backend/.../service/BackgroundCheckService.java` | Added `BadgeService` as 4th constructor param (before `@Value certnApiKey`); call `badgeService.evaluateBadges(workerUid)` in `handleCertnWebhook()` on `STATUS_CLEAR` to award VERIFIED badge |
+| `backend/.../service/InsuranceService.java` | Added `BadgeService` as 5th constructor param; call `badgeService.evaluateBadges(workerUid)` in `adminVerifyInsurance()` to award/revoke INSURED badge |
+| `backend/.../scheduler/InsuranceRenewalJob.java` | Added `@Autowired BadgeService badgeService`; call `badgeService.evaluateBadges(workerUid)` in `handleExpired()` to revoke INSURED badge when policy expires |
+| `backend/.../controller/AdminController.java` | Added `BadgeService` as 6th constructor param; added `POST /api/admin/workers/{uid}/badges/{badgeType}/grant` and `POST /api/admin/workers/{uid}/badges/{badgeType}/revoke` |
+| `backend/.../controller/WorkerController.java` | Added `BadgeService` as 4th constructor param; added `GET /api/users/{uid}/worker/badges` → list of active badge documents |
+| `frontend/.../pages/requester/WorkerProfile.jsx` | Added `BADGE_META` display config object; added `TrustBadge` chip component; replaced hardcoded badge section with `MOCK_ACTIVE_BADGES.map(id => <TrustBadge .../>)` |
+| `backend/src/test/.../AdminControllerTest.java` | Added `@MockBean BadgeService badgeService` + import |
+| `backend/src/test/.../WorkerControllerTest.java` | Added `@MockBean BadgeService badgeService` + import |
+
+### BadgeService detail
+
+**Subcollection path:** `users/{uid}/badges/{badgeType}` (document ID = badge type string)
+
+**Four badge types:** `VERIFIED`, `INSURED`, `TOP_RATED`, `EXPERIENCED`
+
+**`evaluateBadges(workerUid)`:** Reads the User, then calls `processBadge()` for each type with the current eligibility predicate result. This is idempotent — safe to call after any event that might affect badge eligibility.
+
+**Eligibility predicates:**
+- `VERIFIED`: `backgroundCheckStatus == "CLEAR"`
+- `INSURED`: `insuranceStatus IN {VALID, EXPIRING_SOON}` — badge is valid during the expiring-soon window; `InsuranceRenewalJob.handleExpired()` re-evaluates on actual expiry
+- `TOP_RATED`: `rating >= 4.8 AND completedJobCount >= 25`
+- `EXPERIENCED`: `completedJobCount >= 100`
+
+**`processBadge(workerUid, badgeType, eligible)` (private):**
+- `eligible=true + not already active`: Creates badge doc with `isActive=true`, audit log `BADGE_AWARDED`
+- `eligible=false + currently active`: Sets `isActive=false`, adds `revokedAt` + `revokedByAdminUid="system"` + `revokedReason="No longer eligible"`, audit log `BADGE_REVOKED`
+- All other combinations: no-op
+
+**`adminGrantBadge(workerUid, badgeType, adminUid)`:** Validates badge type (400), checks not already active (409), creates badge doc, audit log `BADGE_GRANTED`
+
+**`adminRevokeBadge(workerUid, badgeType, adminUid, reason)`:** Validates badge type (400), checks currently active (409), updates doc (isActive=false, revokedAt, revokedByAdminUid, revokedReason), audit log `BADGE_REVOKED`
+
+**`getActiveBadges(workerUid)`:** Queries `users/{uid}/badges WHERE isActive=true`, returns `List<Map<String, Object>>` (raw Firestore documents)
+
+### Admin badge endpoints (in AdminController)
+
+```
+POST /api/admin/workers/{uid}/badges/{badgeType}/grant
+  Body: {} (empty — system-awarded, no extra fields needed)
+  → 200 {}
+
+POST /api/admin/workers/{uid}/badges/{badgeType}/revoke
+  Body: { "reason": "string" }  (required, @NotBlank)
+  → 200 {}
+```
+
+### Worker badge endpoint (in WorkerController)
+
+```
+GET /api/users/{uid}/worker/badges
+  → 200 [ { badgeId, awardedAt, awardedBySystem, isActive, ... } ]
+  (only the Worker themselves or admin may call)
+```
+
+### Frontend — WorkerProfile.jsx badge display
+
+Added `BADGE_META` object with display config for all 4 badge types (icon, label, tooltip colour, background colour). Added `TrustBadge` component that renders a pill chip with `title` tooltip. The prototype hardcodes `MOCK_ACTIVE_BADGES = ['VERIFIED']`. Live implementation would fetch from `GET /api/users/{uid}/worker/badges`.
+
+```jsx
+const BADGE_META = {
+  VERIFIED:    { icon: '✓', label: 'Background Checked', tooltip: '...', color: '#1A6FDB', bg: '#EBF3FF' },
+  INSURED:     { icon: '🛡', label: 'Insured',            tooltip: '...', color: '#27AE60', bg: '#EAFAF1' },
+  TOP_RATED:   { icon: '★', label: 'Top Rated',           tooltip: '...', color: '#D4A017', bg: '#FEF9E7' },
+  EXPERIENCED: { icon: '◆', label: 'Experienced',         tooltip: '...', color: '#8E44AD', bg: '#F5EEF8' },
+}
+```
+
+### Key design decisions
+
+- **BadgeService has no circular dependencies**: It depends only on `Firestore` and `AuditLogService`. All callers (`RatingService`, `BackgroundCheckService`, `InsuranceService`, `InsuranceRenewalJob`) depend on `BadgeService` — the dependency graph is strictly one-directional.
+- **Subcollection vs embedded array**: Badge documents live in a subcollection (`users/{uid}/badges/{type}`) rather than an array on the `WorkerProfile`. This allows efficient querying by `isActive` without reading the entire user document, and supports a full audit trail of badge history without bloating the user doc.
+- **`evaluateBadges()` is always idempotent**: Calling it multiple times has no side effects when the state hasn't changed. This makes it safe to call from multiple places without worrying about double-awards.
+- **INSURED badge stays active during EXPIRING_SOON**: The Worker's insurance is technically still valid during this window — only the renewal reminder has been triggered. The `InsuranceRenewalJob.handleExpired()` path calls `evaluateBadges()` when the policy actually expires, which revokes the badge at the right moment.
+- **Admin manual grant/revoke with audit trail**: Admins can override automatic eligibility for edge cases (e.g., granting a badge during an appeal, or revoking for cause). Every manual action is recorded with `awardedByAdminUid` / `revokedByAdminUid` and a reason.
+- **`@Autowired` field injection in InsuranceRenewalJob**: Quartz instantiates job beans via its own mechanism, bypassing Spring's constructor injection. Field injection with `@Autowired` is the established pattern for Quartz jobs in this codebase (consistent with how `AuditLogJob` and `AnalyticsJob` are wired).
+
+### Test regressions fixed (same `@MockBean` pattern as P3-01/02/03)
+
+- `AdminControllerTest`: `AdminController` now has `BadgeService` as 6th constructor param — added `@MockBean BadgeService badgeService`
+- `WorkerControllerTest`: `WorkerController` now has `BadgeService` as 4th constructor param — added `@MockBean BadgeService badgeService`
+
+### Compile and test results
+
+`./mvnw test` — **139 tests, 0 failures, 0 errors.**
+
+---
+
+## P3-05 — Fraud Detection Rules Engine
+**Date:** 2026-04-17
+**Status:** Complete
+
+### Objective
+Evaluate fraud rules before every Worker payout. If any rule triggers, pause the payout, create a `fraudFlags` document, and notify the Worker and Admin. Provide Admin endpoints to review, approve (release payout), or reject (deny payout) flagged payouts.
+
+### Files created
+
+| File | Purpose |
+|---|---|
+| `backend/.../service/FraudDetectionService.java` | Core rules engine: `checkBeforePayout()`, `approveFraudFlag()`, `rejectFraudFlag()`, `getFraudFlags()` |
+| `backend/.../dto/FraudFlagReviewRequest.java` | Optional `notes` body for approve/reject endpoints |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `backend/.../model/Job.java` | Added `payoutPaused` boolean field with getter/setter |
+| `backend/.../service/PaymentService.java` | Added `FraudDetectionService` as 5th constructor param; added fraud check call in `releasePayment()` before Stripe Transfer |
+| `backend/.../service/NotificationService.java` | Added 3 `@Async` methods: `sendPayoutUnderReview`, `notifyAdminFraudFlag`, `sendPayoutDenied` |
+| `backend/.../controller/AdminController.java` | Added `FraudDetectionService` as 7th constructor param; added `FraudFlagReviewRequest` import; added 3 endpoints: `GET /api/admin/fraud-flags`, `POST /api/admin/fraud-flags/{flagId}/approve`, `POST /api/admin/fraud-flags/{flagId}/reject` |
+| `backend/src/test/.../AdminControllerTest.java` | Added `@MockBean FraudDetectionService fraudDetectionService` + import |
+
+### FraudDetectionService detail
+
+**Firestore collection:** `fraudFlags/{flagId}` (top-level)
+
+**Schema:** `flagId`, `workerUid`, `jobId`, `ruleTriggered` (comma-separated rule names), `detectedAt`, `status` (`PENDING_REVIEW`|`APPROVED`|`REJECTED`), `payoutAmountCents`, `reviewedByAdminUid`, `reviewedAt`, `reviewNotes`
+
+**`checkBeforePayout(jobId)`:**
+1. Reads job → gets workerUid, payout cents
+2. Loads Worker user doc for account-level checks
+3. Evaluates 4 rules:
+   - `RULE_VELOCITY`: query jobs where workerId=worker, status=COMPLETE, completedAt >= now−24h — flag if count > 5
+   - `RULE_LARGE_PAYOUT`: flag if payoutCents > 50,000 (> $500 CAD)
+   - `RULE_RATING_MANIPULATION`: simplified proxy — flag if rating ≥ 4.8 AND ratingCount is in [3, 5] (suspiciously high rating with very few data points; full check requires per-job rating history)
+   - `RULE_NEW_ACCOUNT_PAYOUT`: flag if account age < 7 days AND payoutCents > 20,000 (> $200 CAD)
+4. If no rules trigger: return `true` (safe)
+5. If any rule triggers: create fraudFlags doc → set `job.payoutPaused=true` → audit log `FRAUD_FLAG_RAISED` → notify Worker + Admin → return `false`
+
+**`approveFraudFlag(flagId, adminUid, notes)`:**
+- Guards: must be PENDING_REVIEW (409 otherwise)
+- Sets flag status to APPROVED + stores reviewedByAdminUid/reviewedAt/reviewNotes
+- Clears `payoutPaused=false` on job (so next releasePayment call passes the check)
+- Audit log `FRAUD_FLAG_APPROVED`
+- Returns `jobId` (caller uses it to trigger `paymentService.releasePayment()`)
+
+**`rejectFraudFlag(flagId, adminUid, notes)`:**
+- Guards: must be PENDING_REVIEW (409 otherwise)
+- Sets flag status to REJECTED + stores review fields
+- Audit log `FRAUD_FLAG_REJECTED`
+- Notifies Worker via `sendPayoutDenied`
+
+### Integration into PaymentService.releasePayment()
+
+Before the Stripe Transfer call, added:
+```java
+boolean isSafe = fraudDetectionService.checkBeforePayout(jobId);
+if (!isSafe) {
+    throw new ResponseStatusException(UNPROCESSABLE_ENTITY,
+            "Payout paused pending fraud review ...");
+}
+```
+The existing `catch (InterruptedException | ExecutionException e)` block covers checked exceptions from `checkBeforePayout`.
+
+### Admin approve flow
+
+```
+POST /api/admin/fraud-flags/{flagId}/approve
+  Body: { "notes": "..." }  // optional
+  
+AdminController:
+  1. fraudDetectionService.approveFraudFlag(flagId, adminUid, notes) → returns jobId
+  2. paymentService.releasePayment(jobId)  // fraud check now passes (flag is APPROVED)
+  → HTTP 200
+```
+
+This keeps `FraudDetectionService` free of any `PaymentService` dependency — the circular dependency is avoided by letting `AdminController` orchestrate the two calls.
+
+### Key design decisions
+
+- **No circular dependency**: `FraudDetectionService` depends only on `Firestore`, `JobService`, `NotificationService`, `AuditLogService`. `PaymentService` depends on `FraudDetectionService` but not vice versa. `AdminController` orchestrates both for the approve flow.
+- **Approve-then-release pattern**: `approveFraudFlag()` clears the flag and removes `payoutPaused`, then `AdminController` calls `releasePayment()`. The fraud check in `releasePayment` naturally passes because no PENDING_REVIEW flag exists for that job anymore. No bypass token or flag-skip mechanism needed.
+- **`payoutPaused` field on Job**: Added for admin dashboard visibility. The fraud check doesn't actually read this field — it checks for PENDING_REVIEW flags in the `fraudFlags` collection. The field is purely informational.
+- **Rule 3 is a simplified proxy**: The spec calls for comparing current rating to the average 10 jobs ago. This requires per-job rating history, which is out of scope. The proxy (high rating + very few ratings) catches the same manipulation pattern in the early-account phase. Noted in code comments for future implementation.
+- **Reject does not auto-refund Requester**: The spec says "notify Worker payout denied, optionally refund Requester." The refund is intentionally left as a separate manual step via `POST /api/admin/jobs/{id}/refund` — different fraud scenarios warrant different refund decisions and forcing it would be overly prescriptive.
+
+### Test regressions fixed (same `@MockBean` pattern)
+
+- `AdminControllerTest`: `AdminController` now has `FraudDetectionService` as 7th constructor param — added `@MockBean FraudDetectionService fraudDetectionService`
+- `PaymentControllerTest`: unchanged — `PaymentController` depends only on `PaymentService`, which is already mocked as `@MockBean`
+
+### Compile and test results
+
+`./mvnw test` — **139 tests, 0 failures, 0 errors.**
+
+---
+
+## 2026-04-18 — P3-06 Enhanced Admin Controls (ban / suspend / unban / bulk-action)
+
+### Context
+
+User asked to implement P3-06 (Enhanced Admin Controls). This task adds Trust & Safety account moderation capabilities: admins can ban users, temporarily suspend them, lift bans/suspensions, and apply bulk job actions (release or refund a batch of jobs in one API call). All actions are audit-logged with reason, and ban revokes Firebase tokens + clears custom claims immediately.
+
+---
+
+### Changes made
+
+#### New DTOs
+
+- **`BanUserRequest.java`** — `{ reason: @NotBlank }` — shared by ban and unban endpoints.
+- **`SuspendUserRequest.java`** — `{ reason: @NotBlank, durationDays: @Min(1) @Max(365) }`.
+- **`BulkJobActionRequest.java`** — `{ jobIds: @NotEmpty, action: @Pattern("release|refund") }`.
+
+#### Model: `User.java`
+
+Added three new fields that support the ban/suspend lifecycle:
+- `bannedReason` — reason text populated on ban; cleared on unban.
+- `bannedAt` — Firestore `Timestamp` of the ban action.
+- `suspendedAt` — Firestore `Timestamp` set when the suspension begins.
+- `suspendedUntil` — `java.util.Date` expiry used by both the auto-unsuspend timer and the notification email.
+
+Note: `suspendedReason` already existed; all new fields clear back to `null` on unban.
+
+#### Quartz job: `AutoUnsuspendJob.java`
+
+New one-shot Quartz job that fires when a suspension expires. Delegates to `UserService.unbanUser(uid, "SYSTEM", "Suspension period expired — auto-unsuspended")`. Scheduled dynamically from `AdminController.suspendUser()` using the same `JobBuilder`/`TriggerBuilder` pattern as `DispatchJob`.
+
+Group name constant: `AutoUnsuspendJob.JOB_GROUP = "auto-unsuspend"`. Re-scheduling replaces any existing timer for the same uid (idempotent for repeated suspend calls).
+
+#### Service: `UserService.java`
+
+Added `AuditLogService` as a 4th constructor dependency (was previously: Firestore, FirebaseAuth, NotificationService).
+
+Three new public methods:
+
+**`banUser(uid, adminUid, reason)`**
+1. Guards against double-ban (throws 409).
+2. Writes `accountStatus=banned`, `bannedReason`, `bannedAt` to Firestore.
+3. Calls `revokeTokens(uid)` — `firebaseAuth.revokeRefreshTokens()` — existing sessions invalidated.
+4. Calls `setCustomClaims(uid, [])` to strip roles from future tokens.
+5. `notificationService.sendAccountBannedEmail()`.
+6. `auditLogService.write()` with before/after state.
+
+**`suspendUser(uid, adminUid, reason, suspendedUntil)`**
+1. Guards against ban-then-suspend confusion (409 if banned); 409 if already suspended.
+2. Writes `accountStatus=suspended`, `suspendedReason`, `suspendedAt`, `suspendedUntil`.
+3. Calls `revokeTokens(uid)` — does NOT clear claims (suspension is reversible; roles are preserved in Firestore and restored on unsuspend).
+4. `notificationService.sendAccountSuspendedEmail()`.
+5. Audit log.
+
+**`unbanUser(uid, adminUid, reason)`**
+1. Guards against calling on an already-active account (409).
+2. Writes `accountStatus=active`; nulls out all ban/suspend fields.
+3. Restores Firebase custom claims from the `roles` array in Firestore.
+4. Audit log. (No new notification method needed — user discovers their account is active when they log back in.)
+
+Two private helpers added:
+- `revokeTokens(uid)` — wraps `firebaseAuth.revokeRefreshTokens(uid)`, non-fatal.
+- `revokeTokensAndClearClaims(uid)` — calls both; used only by ban.
+- `writeUpdates(uid, updates)` — same pattern as `WorkerService.writeUpdates()`, factored in here to avoid Firestore boilerplate.
+
+#### Service: `NotificationService.java`
+
+Added two `@Async` email methods:
+- `sendAccountBannedEmail(uid, name, reason)` — subject: "Your YoSnowMow account has been suspended"; uses `buildHtml()` with reason text.
+- `sendAccountSuspendedEmail(uid, name, reason, suspendedUntil)` — formats `suspendedUntil` as "MMMM d, yyyy" for readability.
+
+#### Controller: `AdminController.java`
+
+Added `UserService` and `Scheduler` (Quartz) as 8th and 9th constructor params. Added constant `CANCELLABLE_ON_BAN = Set.of("REQUESTED", "PENDING_DEPOSIT", "CONFIRMED")`.
+
+Four new endpoints:
+
+**`POST /api/admin/users/{uid}/ban`** — `@Valid BanUserRequest` body:
+1. Calls `cancelOpenJobsForUser(uid, adminUid)` — iterates `jobService.listJobsForUser()`, cancels any job in `CANCELLABLE_ON_BAN`, refunds jobs that had a deposit (non-REQUESTED status). Failures are logged and skipped (best-effort — the ban proceeds even if a job cancel fails).
+2. Calls `userService.banUser()`.
+
+**`POST /api/admin/users/{uid}/unban`** — `@Valid BanUserRequest` body:
+1. Directly calls `userService.unbanUser()`.
+
+**`POST /api/admin/users/{uid}/suspend`** — `@Valid SuspendUserRequest` body:
+1. Computes `suspendedUntil = Instant.now() + durationDays * 86_400_000ms`.
+2. Calls `userService.suspendUser()`.
+3. Calls `scheduleAutoUnsuspend(uid, delayMs)` — the private helper that creates the one-shot Quartz timer.
+
+**`POST /api/admin/jobs/bulk-action`** — `@Valid BulkJobActionRequest` body:
+1. Iterates `jobIds` sequentially.
+2. For each: calls `paymentService.releasePayment(jobId)` or `paymentService.refundJob(jobId)`.
+3. Returns `{ succeeded: N, failed: N, errors: [...] }` — always 200 even on partial failure, so the caller can see which jobs failed without needing a retry-after.
+
+Design decision — **circular dependency avoidance**: `JobService` depends on `WorkerService → UserService`. Adding `JobService` to `UserService` would be circular. Solution: all job-cancellation logic lives in `AdminController.cancelOpenJobsForUser()` which already has `JobService` and `PaymentService` injected. `UserService.banUser()` handles only the account-level operations (Firestore, Firebase, notification, audit).
+
+#### Frontend: `api.js`
+
+Added four new API call exports:
+- `banUser(uid, reason)` → `POST /api/admin/users/${uid}/ban`
+- `unbanUser(uid, reason)` → `POST /api/admin/users/${uid}/unban`
+- `suspendUser(uid, reason, durationDays)` → `POST /api/admin/users/${uid}/suspend`
+- `bulkJobAction(jobIds, action)` → `POST /api/admin/jobs/bulk-action`
+
+#### Frontend: `Dashboard.jsx`
+
+Added `Modal` import and moderation state:
+- `moderationModal` — `{ action, uid, name }` or `null` (controls which modal is open)
+- `moderationReason`, `moderationDays`, `moderationSubmitting`, `moderationError`
+
+Users tab table: added **Actions** column (5th column, `cols` bumped from 4→5 in `LoadingRow` / `ErrorRow`). Per-row logic:
+- Active accounts: "Suspend" (amber) + "Ban" (red) buttons.
+- Suspended/banned accounts: "Unsuspend"/"Unban" (green) button.
+
+Modal (`Modal` component from `../../components/Modal`):
+- Title changes by action type.
+- Duration input (1–365 days) shown only for suspend.
+- Reason textarea (required).
+- Warning message shown for ban: "This will cancel all open jobs..."
+- Submit calls the appropriate API method, then `fetchUsers(userPages.page)` to refresh.
+
+Status badge fix: the suspended/banned colour mapping was previously using ambiguous colours. Updated: green=active, red=banned, amber (#FFFBEB bg / #92400E text) = suspended.
+
+---
+
+### Test results
+
+`./mvnw test` — **151 tests, 0 failures, 0 errors.**
+
+AdminControllerTest grew from 12 to 23 tests (+11 new tests covering all four new endpoints: role enforcement 403, happy path 200, and validation 400 cases).
+
+---
+
+## 2026-04-18 — P3-07 Compliance Reporting (transaction export + workers summary)
+
+### Context
+
+User asked to continue. Next task is P3-07: compliance reporting — a transaction log export endpoint (CSV or JSON, date-range filtered, rate-limited) and an annual worker payout summary endpoint for T4A-equivalent reporting. The frontend export button was already wired in P2-07 but was hitting a 404 stub.
+
+---
+
+### Changes made
+
+#### `pom.xml`
+
+Added `commons-csv 1.10.0` (Apache Commons CSV) for the CSV serialisation.
+
+#### `AdminController.java`
+
+Added `FirebaseAuth` and `AuditLogService` as new constructor dependencies (needed to look up user emails and audit every export).
+
+Two new endpoints:
+
+**`GET /api/admin/reports/transactions?from=&to=&format=csv|json`**
+
+- Validates date range (≤ 366 days). Format must be `csv` or `json`.
+- Rate-limits via Firestore document `adminRateLimits/{adminUid}`: 10 requests/hour per admin. Uses a Firestore transaction to read/increment a counter + window-start timestamp atomically. Expired windows (>1 hour old) are reset. Returns HTTP 429 on limit exceeded.
+- Queries `jobs` where `status IN [COMPLETE, RELEASED, SETTLED, CANCELLED, REFUNDED]` (Firestore `whereIn`). Filters in Java by terminal timestamp (releasedAt → refundedAt → cancelledAt → completedAt), checking the event falls within [fromDate midnight, toDate+1 midnight) in Ontario timezone.
+- Builds one row per job: `jobId, date, status, serviceTypes, requesterId, requesterEmail, workerId, workerEmail, grossAmountCAD, hstCAD, platformFeeCAD (computed = tierPriceCAD * commissionRateApplied), workerNetCAD, cancellationFeeCAD, commissionRate`.
+- Email lookup: calls `firebaseAuth.getUser(uid).getEmail()`. Non-fatal — returns empty string on failure.
+- CSV: Apache Commons `CSVFormat.EXCEL` with dynamic header row built from the `LinkedHashMap` key order. Returns `ResponseEntity<byte[]>` with `Content-Type: text/csv` and `Content-Disposition: attachment; filename="yosnowmow-transactions-YYYY-MM-DD-YYYY-MM-DD.csv"`.
+- JSON: returns `ResponseEntity<List<Map>>`.
+- Every export is audit-logged with `REPORT_EXPORTED`, date range, format, and row count.
+
+**`GET /api/admin/reports/workers-summary?year=YYYY`**
+
+- Validates year (2000–2100).
+- Queries `jobs` where `status IN [RELEASED, SETTLED]` AND `releasedAt` between `Jan 1 00:00` and `Jan 1 00:00 next year` (Ontario timezone).
+- Aggregates by `workerId`: `completedJobs`, `grossPayoutCAD`, `hstCollectedCAD`, `netPayoutCAD`. Worker name is looked up from Firestore `users/{uid}.name`.
+- Returns JSON array sorted alphabetically by `workerName`.
+
+Private helpers added to AdminController:
+- `checkRateLimit(adminUid)` — Firestore-transactional per-admin export counter.
+- `resolveEventTimestamp(job)` — picks the most specific terminal timestamp.
+- `buildTransactionRow(job, eventTs)` — builds a `LinkedHashMap` with all report columns.
+- `buildCsvBytes(rows)` — uses Apache Commons CSV to produce a UTF-8 byte array.
+- `lookupUserEmail(uid)` — Firebase Auth SDK lookup, non-fatal.
+- `lookupUserName(uid)` — Firestore lookup, falls back to uid on failure.
+- `toMidnightTimestamp(date, zone)` — general-purpose replacement for `startOfTodayTimestamp()` (both coexist; stats still uses the old one).
+- `fmt2(v)`, `round2(v)`, `nvl(v)` — formatting utilities.
+
+#### `Analytics.jsx` (frontend)
+
+Updated export error handler: replaced the "404 = coming in Phase 3" stub message with a proper 429 rate-limit message. The CSV download path was already correct — no other changes needed.
+
+---
+
+### Test results
+
+`./mvnw test` — **156 tests, 0 failures, 0 errors.**
+
+AdminControllerTest grew from 23 to 28 tests (+5 new tests: role enforcement 403 for both endpoints, date-range validation 400, format validation 400, year validation 400).
+
+---
+
+## 2026-04-18 — P3-08 Security Audit & Penetration Testing Checklist
+
+### Context
+
+P3-08 is a documentation task — produce a comprehensive security audit checklist for use before public launch. No code changes.
+
+### Changes made
+
+Created `docs/security-audit-checklist.md` with 8 sections and 32 checklist items. Each item specifies:
+- What to test (plain English description)
+- How to test (specific `curl` command, SDK call, Firebase Console action, or git command)
+- Expected result (the pass criterion)
+- A Result field (PASS / FAIL / N/A) for the reviewer to fill in
+
+Sections:
+1. **Authentication & Authorization** (7 items) — 401 without token, expired tokens, public endpoints, admin/worker/requester RBAC, banned user token revocation, custom claims sync.
+2. **Data Access Control** (6 items) — cross-requester job reads, cross-worker job reads, cross-requester mutations, Firestore security rules for writes and notification feed reads, admin super-access.
+3. **Input Validation & Injection** (6 items) — SQL injection strings in address field, MIME-type-based file upload rejection, size limits, mass assignment, XSS in notes, long input handling.
+4. **Stripe Security** (5 items) — missing signature header, invalid signature, idempotent duplicate events, server-side amount computation, clientSecret not logged/stored.
+5. **File Upload Security** (3 items) — no execution permissions on bucket, UUID-based storage paths, signed URL expiry ≤ 1 hour.
+6. **Secrets & Configuration** (5 items) — git log grep, Cloud Run Secret Manager references, Maps key not in bundle, CORS origin whitelist, application-prod.yml gitignored.
+7. **Rate Limiting & Abuse** (3 items) — export 429 after 10/hour, no unbounded queries, dispatch non-response cooldown.
+8. **Audit Log Integrity** (4 items) — integrity job ran last 7 days, hash-chain break detection, state machine entries, admin action entries.
+
+Sign-off table included with pre-launch gate: Sections 1–6 must all pass before opening to the public.
+
+No code changes. No test run needed.
+
+---
+
+## 2026-04-18 — Local dev environment setup + admin disputes tab wired to real API
+
+### Context
+
+User began working toward a fully executable local demo (no real money). Discussion covered: running 4 terminal windows (Firebase emulators, seed script, Spring Boot, Vite dev server), fixing the Maven `-D` flag quoting issue on Windows, finding Stripe sandbox keys, and keeping the Stripe secret key out of git.
+
+### Issues resolved
+
+**Maven `-Dspring-boot.run.arguments=` parsing failure on Windows:** Maven was splitting the `-D` flag at the dot, treating `.run.arguments=...` as a lifecycle phase name. Fix: replaced with the correct property name `mvn spring-boot:run -Dspring-boot.run.profiles=dev`. That also failed the same way. Final fix: set `$env:SPRING_PROFILES_ACTIVE="dev"` as a PowerShell environment variable and run `mvn spring-boot:run` without any `-D` flag.
+
+**Keeping Stripe secret key out of git:** `application-dev.yml` is not gitignored — recommended setting secrets as PowerShell env vars inline: `$env:STRIPE_SECRET_KEY="sk_test_..."; mvn spring-boot:run`. Nothing touches the filesystem.
+
+**Stripe webhook secret:** Requires Stripe CLI (`stripe listen --forward-to localhost:8081/webhooks/stripe`), which prints `whsec_...` on startup. Port is 8081 per `application-dev.yml` (not 8080, which the Firebase emulator uses).
+
+**Stripe CLI already installed:** WinGet install failed with "Access is denied" because the exe was already present. `stripe --version` confirmed it was installed; proceeded to `stripe login`.
+
+### Admin disputes tab — wired to real API
+
+The disputes tab in `AdminDashboard.jsx` used a hardcoded `INITIAL_DISPUTES` mock array (2 fake entries) and a `resolveDispute` function that only updated local state. No backend endpoint existed to list disputes.
+
+**Backend change — `AdminController.java`:**
+- Added `import com.yosnowmow.model.Dispute`
+- Added `GET /api/admin/disputes?status=` endpoint: queries Firestore `disputes` collection ordered by `openedAt` DESC, limit 100, optional `whereEqualTo("status", ...)` filter. Returns `List<Dispute>`.
+
+**Frontend — `api.js`:**
+- Added `getAdminDisputes(status)` → `GET /api/admin/disputes`
+
+**Frontend — `Dashboard.jsx`:**
+- Removed `INITIAL_DISPUTES` constant (mock data)
+- Added `disputes`, `disputesLoading`, `disputesError` state
+- Added `fetchDisputes()` using `api.getAdminDisputes()`
+- Updated `useEffect` on `activeTab` to call `fetchDisputes()` when disputes tab first opened (lazy-load pattern, same as users tab)
+- Replaced `resolveDispute(id, resolution)` (local state mutation) with an async function calling `api.resolveDispute(disputeId, { resolution })` then refreshing
+- Updated overview card "Open Disputes" to filter `d.status === 'OPEN'` (was `'Open'`)
+- Updated disputes tab cards to use real Dispute model fields: `disputeId`, `jobId`, `openedByUid`, `openedAt` (Firestore Timestamp → formatted date), `requesterStatement`, `workerStatement`, `resolution`, `adminNotes`
+- Resolve buttons now pass `'RELEASED'` / `'REFUNDED'` (backend enum values, not display strings)
+- Removed "Dispute API wires in P2-01. Showing prototype data." warning banner — it's now live
+
+---
+
+## 2026-04-18 — Local run fixes + logout + signup implementation
+
+### Issues fixed
+
+**Vite proxy port mismatch:** `vite.config.js` had the proxy pointing to `localhost:8080` (Firebase emulator port) instead of `localhost:8081` (Spring Boot dev port). Fixed. (Note: moot since `VITE_API_BASE_URL=http://localhost:8081` in `.env.local` makes requests absolute, bypassing the proxy — corrected for accuracy.)
+
+**No logout button in any layout:** `AuthContext.signOut()` existed but was never called from the UI. Added "Sign out" button to all three layout headers. All layouts now use `useAuth()` instead of `useMock()` for the user's display name.
+
+**Signup page was a placeholder:** `Signup.jsx` contained only `return <div>Sign Up — coming soon</div>`.
+
+### AuthContext.jsx
+- Added `createUserWithEmailAndPassword` import
+- Added `signUp(email, password)` — wraps `createUserWithEmailAndPassword`
+- Added `refreshProfile()` — re-fetches `users/{uid}` Firestore doc and updates state; used after signup to load newly created profile without waiting for next `onAuthStateChanged`
+- Exposed both in context value
+
+### api.js
+- Added `createUser(body)` → `POST /api/users`
+
+### Signup.jsx — full implementation
+Fields: name, email, password, confirm password, DOB, phone (optional), account type radio (Requester / Worker / Both), ToS checkbox. Flow: `signUp` → `createUser` → `refreshProfile` → navigate. Reuses Login.module.css, Button, Input components.
+
+### Layout changes
+- **RequesterLayout / WorkerLayout / AdminLayout**: replaced `useMock()` with `useAuth()`; display real `userProfile.name`; added "Sign out" button that calls `signOut()` + navigates to `/login`
+
+---
+
+## 2026-04-18 — Geocoding coverage expansion + error visibility fix
+
+### Problems
+
+1. **Spring Boot 3 omits error messages** by default (`server.error.include-message` defaults to `never`). Frontend was showing generic "Failed to post job" instead of the real backend reason. Fixed by adding `server.error.include-message: always` and `include-binding-errors: always` to `application-dev.yml`.
+
+2. **Google Maps precision filter too strict**: `tryGoogleMaps` only accepted `ROOFTOP` and `RANGE_INTERPOLATED` results. Many valid Canadian addresses (suburban, postal code centroid results) return `GEOMETRIC_CENTER`, causing silent fallthrough to the FSA table. Extended the condition to also accept `GEOMETRIC_CENTER` (~200 m accuracy, sufficient for worker-matching).
+
+3. **FSA centroid table had gaps**: Only ~35 entries, missing most Toronto FSAs. M9B (Etobicoke/Cloverdale) was not covered. Expanded to cover all ~90 Toronto M-prefix FSAs across Scarborough, North York, East Toronto, Downtown, West Toronto, and Etobicoke.
+
+### Changes
+
+**`application-dev.yml`**: Added `server.error.include-message: always` and `server.error.include-binding-errors: always`.
+
+**`GeocodingService.java` — `tryGoogleMaps`**: Added `LocationType.GEOMETRIC_CENTER` to accepted precision types. This makes the Google Maps path work for virtually all Canadian addresses, not just rooftop-accuracy ones. Covers all of Canada with a valid Maps API key.
+
+**`GeocodingService.java` — `FSA_CENTROIDS` table**: Expanded from ~35 entries to ~95 entries. Added all Toronto M-prefix FSAs: complete Scarborough (M1A–M1X), North York (M2H–M3N), East Toronto/East York (M4A–M4Y), Downtown (M5A–M5X), West Toronto/York (M6A–M7A), Etobicoke (M8V–M9W). All coordinates are neighbourhood centroids accurate to within ~500 m. This makes the FSA fallback work for all of Toronto without requiring a Maps API key.
+
+**`PostJob.jsx` — error handling**: Improved catch block to extract message from `data.message`, `data.error`, plain string response, or `err.message` rather than the single `data?.message ?? fallback` pattern.
+
+---
+
+## 2026-04-18 — Fix worker dispatch coverage + fake worker count + admin login redirect
+
+### Problems identified and fixed
+
+**1. Hardcoded "3 Workers available" on PostJob Step 1**
+
+`PostJob.jsx` line 236 showed `✓ 3 Workers available in your area` after a fake 1.2-second timeout that always fired regardless of actual backend availability. This is entirely disconnected from the real matching algorithm (which runs asynchronously after job submission). Changed to `✓ Address confirmed — Workers will be matched when you post` which is accurate.
+
+**2. Seed workers all outside service radius of test address M9B 6L9**
+
+The default test address (Etobicoke, M9B 6L9) at approximately (43.648, -79.553) was outside every seed worker's service radius:
+- Alex Moreau (Oakville): 10 km radius, ~25 km away
+- Jordan Tremblay (Burlington): 8 km radius, ~40 km away
+- Marcus Webb (Scarborough): 8 km radius, ~35 km away
+- Priya Sharma (North York): 6 km radius, ~21 km away
+
+Result: `MatchingService.runMatchingAlgorithm()` returned zero candidates → no `jobRequests` document created → worker portal showed nothing.
+
+Fix: Relocated `worker@yosnowmow.test` (Alex Moreau) from Oakville to Etobicoke (600 The East Mall, M9B 4B1, coords 43.6500, -79.5500) with a 30 km radius covering all of Toronto. Updated pricing tiers to 3 tiers matching the wider radius. Also increased Priya Sharma's radius from 6 km to 25 km (updated tiers accordingly). Seed must be re-run after emulator restart: `node firebase/seed-emulator.js`.
+
+**3. Admin role sent to `/requester` after login**
+
+Root cause: The app root `/` redirects to `/requester`. That path is protected, so an unauthenticated visitor gets redirected to `/login` with `state.from = '/requester'`. In `Login.jsx`, the post-login redirect used `from || defaultPathForRoles(roles)`, so any user (including admin) whose login originated from the root got sent to `/requester`.
+
+Fix: Added `resolveDestination(from, roles)` helper in `Login.jsx` that validates `from` against the user's actual roles before using it. If the `from` path is a section the user's roles don't cover (e.g., admin user with `from = '/requester'`), it falls back to `defaultPathForRoles`. Admin users now always land on `/admin`.
+
+---
+
+## 2026-04-18 — Dispatch queue visibility + flow clarification
+
+### Problem
+`worker@yosnowmow.test` (Alex Moreau, newly relocated to Etobicoke with null rating) cannot see a posted job offer, but `worker3@yosnowmow.test` (Priya Sharma, 4.7 rating) can. Admin sees job as REQUESTED with no explanation of who was matched or offered.
+
+### Root cause
+`MatchingService` sorts by rating DESC then distance ASC. Priya Sharma (4.7) ranks first in the dispatch queue; Alex Moreau (null rating, treated as −1.0) ranks last. The dispatch is sequential: the offer goes to Priya first and stays with her for 10 minutes before Alex gets a turn.
+
+### Fix: Admin Dispatch Queue card
+Added a "Dispatch Queue" card to `AdminJobDetail.jsx` that reads `job.matchedWorkerIds`, `job.contactedWorkerIds`, `job.simultaneousOfferWorkerIds`, and `job.offerExpiry` to show admin exactly who was matched and what their current status is.
+
+- Fetches user profiles for up to 10 matched workers in parallel via `getUser()` (in `loadJob`)
+- Each row shows: rank number, avatar, name, rating + job count + service radius, status badge
+- Status badges: "Offer Sent" (amber) · "Accepted" (green) · "Declined / Expired" (gray) · "Queued" (blue)
+- Shows offer expiry timestamp when there is an active outstanding offer
+- Added `matchedWorkerProfiles` state
+
+### Flow clarification
+User observed "job jumped to Awaiting Payment without Worker3 confirming completion." This is correct behaviour: PENDING_DEPOSIT ("Awaiting Payment") is the state AFTER the worker accepts, BEFORE the requester pays Stripe escrow. The full flow is: REQUESTED → worker accepts → PENDING_DEPOSIT → requester pays → CONFIRMED → worker starts → IN_PROGRESS → worker completes → COMPLETE → auto-release → RELEASED.
+
+---
+
+## 2026-04-18 — Major Workflow Redesign: Negotiated Marketplace Model (Spec v1.1)
+
+### Context
+User requested a significant change to the job lifecycle, replacing the sequential-dispatch model with a negotiated marketplace model. Full requirements gathering session.
+
+### Decisions made (stakeholder verbal approval)
+
+| Question | Decision |
+|----------|----------|
+| Who proposes the initial price? | Requester, with YSM-recommended value based on size/service selection |
+| Worker job board (browse available jobs)? | HOLD — future version |
+| Photo mechanics | In-app upload; attached to job document |
+| Address reveal timing | After Requester deposits escrow (not just after agreement) |
+| Worker blocking scope | Job-by-job only (no permanent cross-job blocking) |
+| Admin visibility into blocks | Track rolling 90-day rejection count; flag at 3/5/10 thresholds |
+| Tax | HST 13% (Ontario) |
+| Approval after completion | Requester must explicitly approve; 2-hour auto-approval if no action; Requester acknowledges this window when paying escrow |
+
+### New state machine (SPECIFICATION.md §16)
+
+```
+POSTED → NEGOTIATING → AGREED → ESCROW_HELD → IN_PROGRESS → PENDING_APPROVAL → RELEASED
+  ↓          ↓            ↓           ↓                              ↓
+CANCELLED CANCELLED    CANCELLED  CANCELLED                    DISPUTED → RELEASED|REFUNDED|SETTLED
+```
+
+State renames from v1.0:
+- REQUESTED → POSTED
+- PENDING_DEPOSIT → AGREED
+- CONFIRMED → ESCROW_HELD
+- COMPLETE → PENDING_APPROVAL
+
+New state: NEGOTIATING (first worker responds → job enters this state)
+
+### New collection: `jobOffers/{jobId}_{workerId}`
+Tracks per-worker negotiation thread. Status: PENDING_REQUESTER → PENDING_WORKER → AGREED | REJECTED | WITHDRAWN | SUPERSEDED. Messages array records each back-and-forth (type: PRICE_OFFER | ACCEPT | PHOTO_REQUEST | PHOTO_UPLOAD | REJECT | WITHDRAW).
+
+### Pricing model change
+Price is now negotiated, not derived from worker's tier table. Requester proposes opening price; worker accepts or counters; `agreedPriceCents` locked when both agree. Disbursement formula unchanged: worker gets agreedPrice × (1−commission) + HST; platform retains agreedPrice × commission.
+
+### Implementation plan
+- **Phase A**: Backend only — rename states, add NEGOTIATING, new OfferService, updated MatchingService (notify vs. dispatch), new API endpoints, 90-day rejection counter
+- **Phase B**: Requester UI — price field on PostJob, offer management on JobStatus, escrow payment with 2-hr acknowledgment
+- **Phase C**: Worker UI — offer response (accept/counter/photo request), photo upload
+- **Phase D**: Completion flow — PENDING_APPROVAL status, Approve/Dispute buttons, auto-approval timer
+
+Specification updated in `docs/SPECIFICATION.md` §16.
+
+---
+
+## 2026-04-18 — Session: Phase A Backend Implementation (Negotiated-Marketplace Workflow)
+
+### Context
+Continuation of the redesign discussion from the previous session. The user approved "Phase A" — implementing the backend state machine changes for the negotiated-marketplace workflow. No new user messages; this session was entirely implementation.
+
+---
+
+### Phase A changes implemented
+
+#### Model layer
+
+**`model/Job.java`**
+- Updated status comment listing to v1.1 values.
+- Added new v1.1 pricing/lifecycle fields: `postedPriceCents`, `agreedPriceCents`, `agreedWorkerId`, `rejectedWorkerIds` (List), `approvalWindowHours` (default 2), `approvalWindowAcknowledgedAt`, `postedAt`, `agreedAt`, `pendingApprovalAt`, `approvedAt`, `escrowHeldAt`.
+- Marked old lifecycle timestamps `@Deprecated`: `requestedAt`, `offeredAt`, `acceptedAt`, `confirmedAt`.
+- Added all getters/setters.
+
+**`model/WorkerProfile.java`**
+- Added `jobRejectionCount90d` (int) with Javadoc explaining admin thresholds (3=informational, 5=warning, 10=critical).
+
+**`model/JobOffer.java`** (new)
+- Fields: `offerId` (`{jobId}_{workerId}`), `jobId`, `workerId`, `status` (OPEN|ACCEPTED|COUNTERED|PHOTO_REQUESTED|REJECTED|WITHDRAWN), `workerPriceCents`, `requesterPriceCents`, `lastMoveBy`, `workerNote`, `photoRequestNote`, `messages` (List<OfferMessage>), `createdAt`, `updatedAt`.
+
+**`model/OfferMessage.java`** (new)
+- Immutable thread entry: `actor` (worker|requester), `action` (accept|counter|photo_request|withdraw|reject), `priceCents`, `note`, `createdAt`.
+
+#### DTO layer
+
+**`dto/OfferRequest.java`** (new)
+- `action` (@NotBlank), `priceCents` (@Min(100), required for counter), `note` (@Size(max=500)).
+
+**`dto/CreateJobRequest.java`**
+- Added `postedPriceCents` (@Min(100)) field with getter/setter.
+
+#### Service layer
+
+**`service/OfferService.java`** (new, ~320 lines)
+- `workerSubmitOffer(jobId, workerId, req)`: handles accept/counter/photo_request/withdraw actions.
+- `requesterRespondToOffer(jobId, workerId, requesterId, req)`: handles accept/counter/reject.
+- `handleRequesterAccept(...)`: computes pricing from agreedCents; transitions job POSTED/NEGOTIATING → AGREED; sets agreedPriceCents, agreedWorkerId, agreedAt; rejects all other open offers.
+- `handleRequesterReject(...)`: adds workerId to rejectedWorkerIds; increments `worker.jobRejectionCount90d`; sends notification.
+- `computePricing(job, workerId, agreedCents)`: applies commission tiers (founding=0%, early_adopter=8%, standard=15%); computes HST, workerPayout; updates job pricing fields.
+- `getOffersForJob(jobId)`: returns all offer documents for a job.
+- Constants: `COMMISSION_RATE_STANDARD=0.15`, `COMMISSION_RATE_EARLY_ADOPTER=0.08`, `COMMISSION_RATE_FOUNDING=0.0`, `HST_RATE=0.13`.
+
+**`service/JobService.java`**
+- `ACTIVE_STATUSES`: `POSTED, NEGOTIATING, AGREED, ESCROW_HELD, IN_PROGRESS`.
+- `TRANSITIONS` map: full v1.1 state machine (POSTED→NEGOTIATING|CANCELLED, NEGOTIATING→AGREED|POSTED|CANCELLED, AGREED→ESCROW_HELD|CANCELLED, ESCROW_HELD→IN_PROGRESS|CANCELLED, IN_PROGRESS→PENDING_APPROVAL|INCOMPLETE, PENDING_APPROVAL→DISPUTED|RELEASED, INCOMPLETE→DISPUTED|RELEASED, DISPUTED→RELEASED|REFUNDED, RELEASED→SETTLED).
+- `CANCELLABLE_STATUSES`: `POSTED, NEGOTIATING, AGREED, ESCROW_HELD`.
+- `createJob`: status="POSTED", added rejectedWorkerIds=[], approvalWindowHours=2, postedPriceCents, postedAt=now.
+- `validateActorPermission`: updated switch cases for new status names; PENDING_APPROVAL→DISPUTED enforces configurable `approvalWindowHours`; PENDING_APPROVAL→RELEASED allows requester/system/admin.
+- `applyLifecycleTimestamp`: ESCROW_HELD→escrowHeldAt, PENDING_APPROVAL→pendingApprovalAt+autoReleaseAt.
+- `handleSideEffects`: scheduleAutoRelease triggered on PENDING_APPROVAL.
+- `cancelJob`: fee for ESCROW_HELD (was CONFIRMED).
+
+**`service/MatchingService.java`**
+- Removed `DispatchService` dependency; injected `NotificationService`.
+- Added `TOP_NOTIFY_COUNT = 3`.
+- `matchAndStoreWorkers`: notifies top 3 workers via `notificationService.notifyWorkerNewJobPosted()` instead of calling DispatchService.
+- `countActiveJobsForWorker`: counts ESCROW_HELD and IN_PROGRESS.
+
+**`service/DispatchService.java`** (gutted → deprecated stub)
+- Replaced entirely with minimal `@Deprecated` stub; logs a warning on instantiation.
+
+**`service/DisputeService.java`**
+- Status check changed from "COMPLETE" to "PENDING_APPROVAL".
+- Dispute window now uses `pendingApprovalAt` + `approvalWindowHours` (was hardcoded 2 hours from `completedAt`).
+
+**`service/RatingService.java`**
+- `RATEABLE_STATUSES`: replaced "COMPLETE" with "PENDING_APPROVAL".
+- `checkAndRelease`: triggers on "PENDING_APPROVAL" (was "COMPLETE").
+
+**`service/PaymentService.java`**
+- `createEscrowIntent`: guards for "AGREED" instead of "PENDING_DEPOSIT".
+
+**`service/FraudDetectionService.java`**
+- Velocity query: status "PENDING_APPROVAL", field "pendingApprovalAt".
+
+**`service/NotificationService.java`**
+- Added 6 new async notification stub methods: `notifyWorkerNewJobPosted`, `notifyRequesterOfferReceived`, `notifyWorkerRequesterCountered`, `notifyWorkerOfferAgreed`, `notifyRequesterReadyForEscrow`, `notifyWorkerRejected`.
+
+#### Controller layer
+
+**`controller/OfferController.java`** (new)
+- `GET /api/jobs/{jobId}/offers` — requester lists all offers for a job.
+- `POST /api/jobs/{jobId}/offers` — worker submits offer action.
+- `PUT /api/jobs/{jobId}/offers/{workerId}` — requester responds to specific worker's offer.
+
+**`controller/JobController.java`**
+- `completeJob`: transitions to "PENDING_APPROVAL" (was "COMPLETE").
+- New `POST /{jobId}/approve` endpoint: requester explicitly approves → transitions to RELEASED + triggers payout.
+- `isConfirmedOrLater`: updated status set to include ESCROW_HELD, PENDING_APPROVAL.
+- cancel switch: ESCROW_HELD triggers fee path; AGREED triggers cancelPaymentIntent.
+
+**`controller/WebhookController.java`**
+- `handleAmountCapturable`: comment updated (AGREED, not PENDING_DEPOSIT).
+- `handlePaymentSucceeded`: guards for "AGREED" → transitions to "ESCROW_HELD"; stores `approvalWindowAcknowledgedAt`.
+
+**`controller/AdminController.java`**
+- `ACTIVE_STATUSES`: updated to POSTED, NEGOTIATING, AGREED, ESCROW_HELD, IN_PROGRESS.
+- `CANCELLABLE_ON_BAN`: updated to POSTED, NEGOTIATING, AGREED, ESCROW_HELD.
+- `terminalStatuses`: "PENDING_APPROVAL" replaces "COMPLETE".
+- Ban logic refund guard: `"POSTED"` replaces `"REQUESTED"` (jobs in POSTED state don't have escrow yet → no refund needed).
+
+**`controller/JobRequestController.java`** (deprecated)
+- Replaced with a minimal stub returning `410 Gone` on all requests; `@Deprecated` annotation added.
+
+**`controller/StorageController.java`**
+- Completion photo upload: allowed in "PENDING_APPROVAL" instead of "COMPLETE".
+
+#### Scheduler layer
+
+**`scheduler/PostedJobExpiryJob.java`** (new)
+- Quartz job; runs every hour.
+- Queries POSTED and NEGOTIATING jobs where `postedAt < now - 24 hours`.
+- Transitions each expired job to CANCELLED with `cancelledBy="system_expiry"`; writes audit; notifies requester.
+
+**`scheduler/RejectionCountCleanupJob.java`** (new)
+- Quartz job; runs at 05:00 daily.
+- Queries workers where `jobRejectionCount90d > 0` AND `lastRejectedAt < now - 90 days`.
+- Resets `worker.jobRejectionCount90d` to 0.
+
+**`scheduler/DisputeTimerJob.java`**
+- Status check: "PENDING_APPROVAL" (was "COMPLETE").
+
+**`config/QuartzConfig.java`**
+- Added JobDetail + Trigger beans for `PostedJobExpiryJob` (hourly: `"0 0 * * * ?"`) and `RejectionCountCleanupJob` (05:00 daily: `"0 0 5 * * ?"`).
+- Removed reference to DispatchJob.
+
+#### Test layer
+
+**`MatchingServiceTest.java`**
+- Replaced `@Mock DispatchService` with `@Mock NotificationService`.
+- `makeJob` status: "POSTED" (was "REQUESTED").
+
+**`controller/JobControllerTest.java`**
+- All "REQUESTED" → "POSTED", "PENDING_DEPOSIT" → "AGREED", "CONFIRMED" → "ESCROW_HELD", "COMPLETE" → "PENDING_APPROVAL".
+- `completeJob` test: verifies `transition(jobId, "PENDING_APPROVAL", ...)`.
+
+**`controller/WebhookControllerTest.java`**
+- Payment succeeded test: uses "AGREED" as initial state, verifies "ESCROW_HELD" as result.
+- Already-confirmed skip test: uses "ESCROW_HELD".
+
+**`controller/AdminControllerTest.java`**
+- Status strings updated throughout to new v1.1 names.
+
+**`controller/WorkerControllerTest.java`**
+- Status strings updated.
+
+---
+
+### Grep sweep result
+After all changes, a grep for `"REQUESTED"`, `"PENDING_DEPOSIT"`, `"CONFIRMED"` and `.equals("COMPLETE")` in `src/main/java` returned only one hit: a Javadoc comment in `JobService.java` using `"CONFIRMED"` as an example string — not a status check. No live status comparisons use old names.
+
+---
+
+---
+
+## 2026-04-18 — Session (continued): Phase B Requester UI
+
+### Files changed
+
+**`frontend/src/components/StatusPill/StatusPill.jsx`**
+- STATUS_MAP updated to v1.1 names: POSTED, NEGOTIATING, AGREED, ESCROW_HELD, PENDING_APPROVAL.
+- Old names (REQUESTED, PENDING_DEPOSIT, CONFIRMED, COMPLETE) kept as aliases so any not-yet-migrated admin views degrade gracefully.
+
+**`frontend/src/services/api.js`**
+- Added `getOffersForJob(jobId)` — GET /api/jobs/{jobId}/offers.
+- Added `respondToOffer(jobId, workerId, body)` — PUT /api/jobs/{jobId}/offers/{workerId}.
+- Added `approveJob(jobId)` — POST /api/jobs/{jobId}/approve.
+- Updated JSDoc for `cancelJob` (ESCROW_HELD, not CONFIRMED), `disputeJob` (PENDING_APPROVAL), `completeJob` (PENDING_APPROVAL, 2-hr timer).
+- Marked `respondToJobRequest` as `@deprecated`.
+
+**`frontend/src/context/MockStateContext.jsx`**
+- STATE_ORDER updated to v1.1: POSTED→NEGOTIATING→AGREED→ESCROW_HELD→IN_PROGRESS→PENDING_APPROVAL→RELEASED.
+- MOCK_JOBS: status 'CONFIRMED'→'ESCROW_HELD'; added `postedPriceCents` and `agreedPriceCents`; replaced `completedAt` with `pendingApprovalAt`.
+- `addJob`: initial status 'POSTED'; added `postedPriceCents: 0`, `agreedPriceCents: null`.
+- `setJobStatus` / `advanceJob`: set `pendingApprovalAt` when transitioning to PENDING_APPROVAL.
+
+**`frontend/src/pages/requester/PostJob.jsx`**
+- Step 2 subtitle: "opening offer price — workers may accept or negotiate."
+- Step 2 pricing total label: "Opening offer total".
+- Step 4 review label: "Your opening offer" (was "Agreed fee").
+- API call: adds `postedPriceCents: basePrice` to the request body.
+
+**`frontend/src/pages/requester/JobStatus.jsx`** (rewritten)
+Major changes:
+- TIMELINE_STATES / TIMELINE_LABELS / STATUS_DESC updated to v1.1 names.
+- `canCancel`: POSTED | NEGOTIATING | AGREED | ESCROW_HELD.
+- `canDispute` / `canApprove` / `canRate`: all PENDING_APPROVAL.
+- `workerVisible`: starts from NEGOTIATING (was CONFIRMED).
+- **Offers panel** (POSTED/NEGOTIATING): lists all worker offers with worker name/rating; Accept / Counter / Reject actions for offers where worker made the last move. Loading worker profiles per-offer via `getUser`.
+- **Accept flow**: opens escrow acknowledgment modal ("payment releases automatically after 2 hours") → calls `respondToOffer(action:'accept')` → refreshes job.
+- **Counter flow**: opens modal with price input + note → calls `respondToOffer(action:'counter')` → refreshes.
+- **Reject flow**: window.confirm → calls `respondToOffer(action:'reject')` → refreshes.
+- **Payment required card** (AGREED): shows agreed price, "Pay & Hold Escrow" stub button (Stripe in Phase C).
+- **Work complete / Approve card** (PENDING_APPROVAL): green banner + "Approve & Release Payment" → confirm modal → calls `approveJob()`.
+- **Cancel modal**: text updated to mention ESCROW_HELD fee (was CONFIRMED).
+- Pricing label: "Agreed price" (was "Agreed fee"); pricing section message: "Pricing appears once a price is agreed with a worker."
+
+### What remains (Phase B, C, D)
+- **Phase B**: Requester UI — price field on PostJob, offer management on JobStatus, escrow payment with 2-hr acknowledgment modal
+- **Phase C**: Worker UI — offer response screen (accept/counter/photo request), photo upload
+- **Phase D**: Completion flow — PENDING_APPROVAL status, Approve/Dispute buttons, auto-approval timer display
+- Frontend status constants (React components) still use old strings — not yet updated
+- **Compilation fix**: `./mvnw compile` revealed `DispatchJob.java` still called `dispatchService.handleOfferExpiry()` (removed from the stub). Fixed by replacing `DispatchJob` with a no-op stub matching the `DispatchService` pattern; retained the class to avoid Quartz deserialization errors if old trigger records exist in the DB. Final compile: clean.
+
+---
+
+## 2026-04-19 — Session: Phase C (Worker UI) + Phase D (Completion Flow) — Spec v1.1 Negotiated Marketplace
+
+### Context
+
+Continuing the Spec v1.1 negotiated marketplace migration. Phase B (Requester UI) was completed in the prior session. This session implements:
+- **Phase C**: Worker offer management UI — discover nearby jobs, submit offers, handle counter-offers
+- **Phase D**: Updated completion flow — PENDING_APPROVAL state (replaces COMPLETE), auto-approval messaging
+
+### Problem identified: workers couldn't read POSTED jobs
+
+Before any UI could be built, a backend access control gap was discovered. `JobService.getJobForCaller()` only permitted:
+- The job's `requesterId`
+- The assigned `workerId` (set only after AGREED)
+- Admins
+
+In the v1.1 model, workers receive NEW_JOB_POSTED notifications and need to call `GET /api/jobs/{jobId}` to fetch job details before submitting an offer. At that point, no `workerId` is set on the job. Workers in `matchedWorkerIds` were blocked with `AccessDeniedException`.
+
+**Fix applied to `backend/src/main/java/com/yosnowmow/service/JobService.java`**:
+
+Added a third "matched worker" check in `getJobForCaller()`:
+```java
+boolean isMatchedWorker = caller.hasRole("worker")
+        && job.getMatchedWorkerIds() != null
+        && job.getMatchedWorkerIds().contains(caller.uid());
+```
+Access granted if any of: `isRequester || isAssigned || isMatchedWorker || isAdmin`.
+
+Address remains redacted for workers in POSTED/NEGOTIATING/AGREED — that is enforced separately in `JobController.getJob()` via the `isConfirmedOrLater()` helper (unchanged).
+
+### Missing `submitOffer` in `frontend/src/services/api.js`
+
+`OfferController` backend endpoint `POST /api/jobs/{jobId}/offers` was implemented in Phase A, but `api.js` had no corresponding client function. Added:
+```javascript
+export const submitOffer = (jobId, body) =>
+  api.post(`/api/jobs/${jobId}/offers`, body).then(r => r.data)
+```
+
+### Firestore security rules gap: `jobOffers` collection
+
+`firestore.rules` was last updated in P1-21, before the `jobOffers` collection was designed. The catch-all `/{document=**} → false` was blocking all client reads of `jobOffers`. Workers need a real-time `onSnapshot` listener on their own offers to see requester responses (counters, acceptance, rejection) without polling the API.
+
+**Fix applied to `firebase/firestore.rules`**:
+```
+match /jobOffers/{offerId} {
+  allow read: if isSignedIn() && (
+    resource.data.workerId == request.auth.uid ||
+    isAdmin()
+  );
+  allow write: if false;
+}
+```
+All writes remain Admin SDK only (OfferService). Also updated `jobRequests` comment to note it is legacy Phase 1 dispatch records replaced by `jobOffers` in v1.1.
+
+### Phase C: `frontend/src/pages/worker/JobRequest.jsx` (complete rewrite)
+
+The old version was built for the sequential dispatch model: it listened to `jobRequests` Firestore for PENDING offers with a 10-minute countdown timer and accept/decline buttons. Completely incompatible with v1.1.
+
+**New architecture — two real-time Firestore listeners:**
+
+1. **`jobOffers` where `workerId == uid`** — tracks all offers the worker has submitted and their current status (OPEN, COUNTERED, PHOTO_REQUESTED, ACCEPTED, REJECTED, WITHDRAWN).
+2. **`notifications/{uid}/feed` where `isRead == false`** — discovers `NEW_JOB_POSTED` opportunities the backend has notified this worker about.
+
+**Job detail lazy-loading:**
+For each unique `jobId` seen across both listener streams, `getJob(jobId)` is called once and results cached in `jobCache` (a `useRef` object). Errors are stored as `{ _error: true }` to prevent infinite retry loops on access-denied or network failures.
+
+**Three display sections:**
+1. **Active Offers** (status: OPEN, COUNTERED, PHOTO_REQUESTED): in-flight negotiations. Shows offer status badge (color-coded), the price thread (worker's offered price + requester's counter if any), and contextual action buttons.
+2. **New Nearby Jobs** (NEW_JOB_POSTED notifications without a submitted offer): the opportunity queue. Shows job scope, schedule, opening price, and "Address revealed after escrow" message.
+3. **Concluded** (REJECTED, WITHDRAWN): low-prominence collapsed list at the bottom.
+
+**Sub-components:**
+- `OpportunityCard(job, notification, onAccept, onCounter)`: Renders a new job opportunity. "Accept $XX" button calls `handleAccept`; "Counter" opens the counter modal.
+- `OfferCard(offer, job, onCounter, onWithdraw, onAcceptCounter)`: Renders a submitted offer. Status-aware actions:
+  - OPEN → "Withdraw offer"
+  - COUNTERED → "Counter Again" + "Accept $XX" (requester's counter price)
+  - ACCEPTED → "Waiting for homeowner to pay escrow" info message
+
+**Counter-offer modal** (using existing `Modal` component):
+- Price input: number, min $1, defaults to current offer price
+- Optional note textarea
+- "Send Counter Offer" CTA → `submitOffer(jobId, { action: 'counter', priceCents, note })`
+- Modal also used for "accept from opportunity" (action: 'accept')
+
+**Notification read marking:**
+After the worker clicks Accept or Counter on an opportunity, `markJobNotificationsRead(jobId)` writes `isRead: true` to all unread notifications for that jobId, removing the job from the opportunity queue (since the offer now appears in Active Offers).
+
+**Key handlers:**
+- `handleAccept(jobId, priceCents)` → `submitOffer(jobId, { action: 'accept', priceCents })`
+- `openCounterModal(jobId, currentPrice, mode)` → sets modal state
+- `handleSubmitCounter()` → validates price > 0, calls `submitOffer`, marks notifications read, closes modal
+- `handleWithdraw(jobId)` → `window.confirm` → `submitOffer(jobId, { action: 'withdraw' })`
+- `handleAcceptCounter(offerId, jobId, priceCents)` → `submitOffer(jobId, { action: 'accept', priceCents })`
+
+### Phase D: `frontend/src/pages/worker/ActiveJob.jsx` (status name updates)
+
+The old version used v1.0 status names. Updated throughout:
+
+| Old (v1.0) | New (v1.1) |
+|---|---|
+| `CONFIRMED` | `ESCROW_HELD` |
+| `IN_PROGRESS` | `IN_PROGRESS` (unchanged) |
+| `COMPLETE` | `PENDING_APPROVAL` |
+
+**Specific changes:**
+- `ACTIVE_STATUSES = ['ESCROW_HELD', 'IN_PROGRESS', 'PENDING_APPROVAL']`
+- Job loading preference: `ESCROW_HELD` or `IN_PROGRESS` first, then `PENDING_APPROVAL` fallback
+- Status banner: "🚗 Head to the property" for ESCROW_HELD; "❄️ Clearing in progress" for IN_PROGRESS; "✅ Work submitted — awaiting homeowner approval" for PENDING_APPROVAL
+- Banner background: green (`--color-success`) for PENDING_APPROVAL, blue (`--color-primary`) otherwise
+- ESCROW_HELD card: "Check In at Property" → calls `startJob()` → transitions to IN_PROGRESS
+- IN_PROGRESS card: unchanged (photo upload required, then "Mark Work Complete")
+- **New PENDING_APPROVAL card**: celebration state — "🎉 Work submitted!", "The homeowner has 2 hours to approve or raise a dispute. Payment of $XX releases automatically after approval."
+- Earnings card note: "auto-approves in 2 hrs" added
+- Empty state: "Once your offer is agreed and the homeowner pays, your job will appear here."
+
+### Backend compile verification
+`./mvnw compile -q` — clean, no errors after all changes.
+
+### Files changed this session
+1. `backend/src/main/java/com/yosnowmow/service/JobService.java` — extend `getJobForCaller()` to allow matched workers to read POSTED/NEGOTIATING jobs
+2. `frontend/src/services/api.js` — add `submitOffer(jobId, body)` function
+3. `firebase/firestore.rules` — add `jobOffers` read rule for workers
+4. `frontend/src/pages/worker/JobRequest.jsx` — complete rewrite for v1.1 negotiated marketplace
+5. `frontend/src/pages/worker/ActiveJob.jsx` — status name updates (CONFIRMED→ESCROW_HELD, COMPLETE→PENDING_APPROVAL) + PENDING_APPROVAL celebration card
+
+### What remains
+- Deploy updated firestore.rules: `firebase deploy --only firestore:rules`
+- End-to-end testing in Firebase emulator (seed workers need to be in `matchedWorkerIds` of test jobs)
+- Rating flow UI (post-RELEASED) — Phase E
+- Stripe escrow payment integration (AGREED → ESCROW_HELD) — deferred to later phase

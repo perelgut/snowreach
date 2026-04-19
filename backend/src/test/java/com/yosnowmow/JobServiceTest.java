@@ -153,8 +153,8 @@ class JobServiceTest {
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("createJob: happy path — job document is created in REQUESTED state")
-    void createJob_success_returnsJobWithRequestedStatus() {
+    @DisplayName("createJob: happy path — job document is created in POSTED state")
+    void createJob_success_returnsJobWithPostedStatus() {
         when(geocodingService.geocode(ADDRESS_TEXT))
             .thenReturn(new GeocodingService.GeocodeResult(
                 new GeoPoint(43.65, -79.38), "google_maps"));
@@ -163,7 +163,7 @@ class JobServiceTest {
 
         Job result = jobService.createJob(requesterCaller, req);
 
-        assertThat(result.getStatus()).isEqualTo("REQUESTED");
+        assertThat(result.getStatus()).isEqualTo("POSTED");
         assertThat(result.getRequesterId()).isEqualTo(REQUESTER_ID);
         assertThat(result.getScope()).containsExactly("driveway");
         assertThat(result.getJobId()).isNotBlank();
@@ -234,41 +234,41 @@ class JobServiceTest {
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("cancelJob: from REQUESTED — no cancellation fee; returns previous status")
-    void cancelJob_fromRequested_noFee_returnsPreviousStatus() {
-        when(jobDocSnap.toObject(Job.class)).thenReturn(makeJob("REQUESTED", REQUESTER_ID, null));
+    @DisplayName("cancelJob: from POSTED — no cancellation fee; returns POSTED")
+    void cancelJob_fromPosted_noFee_returnsPreviousStatus() {
+        when(jobDocSnap.toObject(Job.class)).thenReturn(makeJob("POSTED", REQUESTER_ID, null));
 
         String previousStatus = jobService.cancelJob(JOB_ID, REQUESTER_ID, false);
 
-        assertThat(previousStatus).isEqualTo("REQUESTED");
+        assertThat(previousStatus).isEqualTo("POSTED");
         // Verify notification sent without a cancellation fee
         verify(notificationService).sendCancellationEmail(
             eq(REQUESTER_ID), isNull(), eq(false), eq(0.0), eq(JOB_ID));
     }
 
     @Test
-    @DisplayName("cancelJob: from PENDING_DEPOSIT — no fee; returns PENDING_DEPOSIT")
-    void cancelJob_fromPendingDeposit_noFee_returnsPreviousStatus() {
+    @DisplayName("cancelJob: from AGREED — no fee; returns AGREED")
+    void cancelJob_fromAgreed_noFee_returnsPreviousStatus() {
         when(jobDocSnap.toObject(Job.class))
-            .thenReturn(makeJob("PENDING_DEPOSIT", REQUESTER_ID, WORKER_ID));
+            .thenReturn(makeJob("AGREED", REQUESTER_ID, WORKER_ID));
 
         String previousStatus = jobService.cancelJob(JOB_ID, REQUESTER_ID, false);
 
-        assertThat(previousStatus).isEqualTo("PENDING_DEPOSIT");
-        // No fee for cancellation before CONFIRMED
+        assertThat(previousStatus).isEqualTo("AGREED");
+        // No fee for cancellation before ESCROW_HELD
         verify(notificationService).sendCancellationEmail(
             eq(REQUESTER_ID), eq(WORKER_ID), eq(false), eq(0.0), eq(JOB_ID));
     }
 
     @Test
-    @DisplayName("cancelJob: from CONFIRMED — $10 + 13% HST cancellation fee is charged")
-    void cancelJob_fromConfirmed_feeCharged_notificationIncludesFee() {
+    @DisplayName("cancelJob: from ESCROW_HELD — $10 + 13% HST cancellation fee is charged")
+    void cancelJob_fromEscrowHeld_feeCharged_notificationIncludesFee() {
         when(jobDocSnap.toObject(Job.class))
-            .thenReturn(makeJob("CONFIRMED", REQUESTER_ID, WORKER_ID));
+            .thenReturn(makeJob("ESCROW_HELD", REQUESTER_ID, WORKER_ID));
 
         String previousStatus = jobService.cancelJob(JOB_ID, REQUESTER_ID, false);
 
-        assertThat(previousStatus).isEqualTo("CONFIRMED");
+        assertThat(previousStatus).isEqualTo("ESCROW_HELD");
         // Spec §7.3: cancellation fee is $10 + 13% HST = $11.30
         verify(notificationService).sendCancellationEmail(
             eq(REQUESTER_ID), eq(WORKER_ID), eq(true), eq(11.30), eq(JOB_ID));
@@ -286,10 +286,10 @@ class JobServiceTest {
     }
 
     @Test
-    @DisplayName("cancelJob: from COMPLETE — throws InvalidTransitionException")
-    void cancelJob_fromComplete_throwsInvalidTransition() {
+    @DisplayName("cancelJob: from PENDING_APPROVAL — throws InvalidTransitionException")
+    void cancelJob_fromPendingApproval_throwsInvalidTransition() {
         when(jobDocSnap.toObject(Job.class))
-            .thenReturn(makeJob("COMPLETE", REQUESTER_ID, WORKER_ID));
+            .thenReturn(makeJob("PENDING_APPROVAL", REQUESTER_ID, WORKER_ID));
 
         assertThatThrownBy(() -> jobService.cancelJob(JOB_ID, REQUESTER_ID, false))
             .isInstanceOf(InvalidTransitionException.class);
@@ -310,12 +310,12 @@ class JobServiceTest {
     @DisplayName("cancelJob: admin can cancel any cancellable job regardless of requester")
     void cancelJob_byAdmin_succeeds() {
         when(jobDocSnap.toObject(Job.class))
-            .thenReturn(makeJob("REQUESTED", REQUESTER_ID, null));
+            .thenReturn(makeJob("POSTED", REQUESTER_ID, null));
 
         // Admin actor cancels — different UID from requester, but isAdmin=true
         String previousStatus = jobService.cancelJob(JOB_ID, "admin-uid", true);
 
-        assertThat(previousStatus).isEqualTo("REQUESTED");
+        assertThat(previousStatus).isEqualTo("POSTED");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

@@ -136,7 +136,7 @@ class FirestoreJobServiceTest {
         // Returned object has correct shape.
         assertThat(returned.getJobId()).isNotBlank();
         assertThat(returned.getRequesterId()).isEqualTo(testUid);
-        assertThat(returned.getStatus()).isEqualTo("REQUESTED");
+        assertThat(returned.getStatus()).isEqualTo("POSTED");
         assertThat(returned.getScope()).containsExactly("driveway");
         assertThat(returned.getPropertyCoords()).isNotNull();
         assertThat(returned.getCreatedAt()).isNotNull();
@@ -145,7 +145,7 @@ class FirestoreJobServiceTest {
         DocumentSnapshot snap = firestore.collection("jobs")
                 .document(returned.getJobId()).get().get();
         assertThat(snap.exists()).isTrue();
-        assertThat(snap.getString("status")).isEqualTo("REQUESTED");
+        assertThat(snap.getString("status")).isEqualTo("POSTED");
         assertThat(snap.getString("requesterId")).isEqualTo(testUid);
     }
 
@@ -201,7 +201,7 @@ class FirestoreJobServiceTest {
 
         assertThat(fetched.getJobId()).isEqualTo(created.getJobId());
         assertThat(fetched.getRequesterId()).isEqualTo(testUid);
-        assertThat(fetched.getStatus()).isEqualTo("REQUESTED");
+        assertThat(fetched.getStatus()).isEqualTo("POSTED");
     }
 
     @Test
@@ -214,15 +214,15 @@ class FirestoreJobServiceTest {
     }
 
     @Test
-    @DisplayName("transitionStatus: REQUESTED → PENDING_DEPOSIT updates Firestore status field")
+    @DisplayName("transitionStatus: POSTED → NEGOTIATING updates Firestore status field")
     void transitionStatus_updatesStatusInFirestore() throws Exception {
         Job job = createTestJob();
 
-        jobService.transitionStatus(job.getJobId(), "PENDING_DEPOSIT", "stripe", null);
+        jobService.transitionStatus(job.getJobId(), "NEGOTIATING", "system", null);
 
         DocumentSnapshot snap = firestore.collection("jobs")
                 .document(job.getJobId()).get().get();
-        assertThat(snap.getString("status")).isEqualTo("PENDING_DEPOSIT");
+        assertThat(snap.getString("status")).isEqualTo("NEGOTIATING");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

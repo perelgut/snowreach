@@ -111,9 +111,9 @@ class StorageControllerTest {
     }
 
     @Test
-    @DisplayName("POST /photos: assigned Worker, job COMPLETE → 201 (photos allowed after completion)")
-    void uploadPhoto_assignedWorkerComplete_returns201() throws Exception {
-        Job job = makeJob(WKR_UID, "COMPLETE", List.of("existing-photo.jpg"));
+    @DisplayName("POST /photos: assigned Worker, job PENDING_APPROVAL → 201 (photos allowed after submission)")
+    void uploadPhoto_assignedWorkerPendingApproval_returns201() throws Exception {
+        Job job = makeJob(WKR_UID, "PENDING_APPROVAL", List.of("existing-photo.jpg"));
         when(jobService.getJob(JOB_ID)).thenReturn(job);
 
         mockMvc.perform(multipart("/api/jobs/{id}/photos", JOB_ID)

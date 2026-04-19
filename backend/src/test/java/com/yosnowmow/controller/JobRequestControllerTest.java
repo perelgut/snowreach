@@ -4,7 +4,6 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.yosnowmow.config.SecurityConfig;
 import com.yosnowmow.security.AuthenticatedUser;
 import com.yosnowmow.security.RbacInterceptor;
-import com.yosnowmow.service.DispatchService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,8 +22,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -32,17 +29,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * MockMvc slice tests for {@link JobRequestController}.
  *
- * <h3>Coverage</h3>
- * <ul>
- *   <li>POST /api/job-requests/{requestId}/respond — Worker accepts offer → 200</li>
- *   <li>POST /api/job-requests/{requestId}/respond — Worker declines offer → 200</li>
- *   <li>Requester (no worker role) → 403 (RbacInterceptor)</li>
- * </ul>
+ * <p>As of v1.1, {@code JobRequestController} is a deprecated stub returning HTTP 410 Gone.
+ * The sequential-dispatch offer loop has been replaced by the bilateral negotiation flow
+ * in {@link OfferController}. Tests verify the 410 behaviour for any authenticated caller.
  */
 @WebMvcTest(controllers = JobRequestController.class)
 @Import({SecurityConfig.class, RbacInterceptor.class})
 @ActiveProfiles("test")
-@DisplayName("JobRequestController")
+@DisplayName("JobRequestController (deprecated stub)")
 class JobRequestControllerTest {
 
     private static final String REQUEST_ID = "job-req-001_wkr-uid-1";
@@ -52,51 +46,32 @@ class JobRequestControllerTest {
     @Autowired
     private MockMvc mockMvc;
 
-    @MockBean private DispatchService dispatchService;
-    @MockBean private FirebaseAuth    firebaseAuth;
+    @MockBean private FirebaseAuth firebaseAuth;
 
     // ── POST /api/job-requests/{requestId}/respond ─────────────────────────────
 
     @Test
-    @DisplayName("POST /respond: Worker accepts the offer → 200, handleWorkerResponse called")
-    void respondToOffer_workerAccepts_returns200() throws Exception {
+    @DisplayName("POST /respond: Worker caller → 410 Gone (endpoint retired in v1.1)")
+    void respondToOffer_workerCaller_returns410() throws Exception {
         mockMvc.perform(post("/api/job-requests/{id}/respond", REQUEST_ID)
                     .with(asUser(WKR_UID, "worker"))
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""
                             {"accepted": true}
                             """))
-               .andExpect(status().isOk());
-
-        verify(dispatchService).handleWorkerResponse(REQUEST_ID, WKR_UID, true);
+               .andExpect(status().isGone());
     }
 
     @Test
-    @DisplayName("POST /respond: Worker declines the offer → 200, handleWorkerResponse called")
-    void respondToOffer_workerDeclines_returns200() throws Exception {
-        mockMvc.perform(post("/api/job-requests/{id}/respond", REQUEST_ID)
-                    .with(asUser(WKR_UID, "worker"))
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content("""
-                            {"accepted": false}
-                            """))
-               .andExpect(status().isOk());
-
-        verify(dispatchService).handleWorkerResponse(REQUEST_ID, WKR_UID, false);
-    }
-
-    @Test
-    @DisplayName("POST /respond: Requester (no worker role) → 403 (RbacInterceptor)")
-    void respondToOffer_withoutWorkerRole_returns403() throws Exception {
+    @DisplayName("POST /respond: Requester caller → 410 Gone (no role check on deprecated stub)")
+    void respondToOffer_requesterCaller_returns410() throws Exception {
         mockMvc.perform(post("/api/job-requests/{id}/respond", REQUEST_ID)
                     .with(asUser(REQ_UID, "requester"))
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""
-                            {"accepted": true}
+                            {"accepted": false}
                             """))
-               .andExpect(status().isForbidden());
-
-        verify(dispatchService, never()).handleWorkerResponse(any(), any(), anyBoolean());
+               .andExpect(status().isGone());
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
@@ -108,14 +83,5 @@ class JobRequestControllerTest {
             .map(r -> new SimpleGrantedAuthority("ROLE_" + r))
             .collect(Collectors.toList());
         return authentication(new UsernamePasswordAuthenticationToken(user, null, authorities));
-    }
-
-    // Pulled in to avoid unresolved-symbol ambiguity between ArgumentMatchers overloads
-    private static boolean anyBoolean() {
-        return org.mockito.ArgumentMatchers.anyBoolean();
-    }
-
-    private static String any() {
-        return org.mockito.ArgumentMatchers.any();
     }
 }

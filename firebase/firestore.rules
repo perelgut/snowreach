@@ -93,16 +93,28 @@ service cloud.firestore {
 
     // ── jobRequests/{requestId} ───────────────────────────────────────────────
     //
-    // Dispatch offer records, one per Worker per job attempt.
-    // Document ID: "{jobId}_{workerId}".
-    //
-    // Readable by: the target Worker (to display the incoming offer) and admins.
-    //
-    // Writes: ALWAYS via Admin SDK (DispatchService).
-    //   Reason: offer creation, acceptance, and expiry are server-orchestrated;
-    //   no client-side mutation is safe.
+    // Legacy Phase 1 dispatch offer records (replaced by jobOffers in v1.1).
+    // Retained for historical reads only.
 
     match /jobRequests/{requestId} {
+      allow read: if isSignedIn() && (
+        resource.data.workerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow write: if false;
+    }
+
+    // ── jobOffers/{offerId} ───────────────────────────────────────────────────
+    //
+    // v1.1 negotiated-marketplace offer threads. Document ID: "{jobId}_{workerId}".
+    //
+    // Workers subscribe to their own offers in real-time to see requester
+    // responses (counters, acceptance, rejection) without polling the API.
+    //
+    // Readable by: the Worker who submitted the offer and admins.
+    // Writes: ALWAYS via Admin SDK (OfferService) — client denied.
+
+    match /jobOffers/{offerId} {
       allow read: if isSignedIn() && (
         resource.data.workerId == request.auth.uid ||
         isAdmin()

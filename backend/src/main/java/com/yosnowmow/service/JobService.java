@@ -56,7 +56,7 @@ public class JobService {
 
     /** Job statuses considered "active" — a Requester may only have one at a time. */
     private static final Set<String> ACTIVE_STATUSES = Set.of(
-            "REQUESTED", "PENDING_DEPOSIT", "CONFIRMED", "IN_PROGRESS"
+            "POSTED", "NEGOTIATING", "AGREED", "ESCROW_HELD", "IN_PROGRESS"
     );
 
     /** Valid scope values per spec §3.2. */
@@ -67,22 +67,23 @@ public class JobService {
      * CANCELLED from pre-IN_PROGRESS is handled separately by {@link #cancelJob}.
      */
     private static final Map<String, Set<String>> TRANSITIONS = Map.ofEntries(
-            Map.entry("REQUESTED",       Set.of("PENDING_DEPOSIT", "CANCELLED")),
-            Map.entry("PENDING_DEPOSIT", Set.of("CONFIRMED",       "CANCELLED")),
-            Map.entry("CONFIRMED",       Set.of("IN_PROGRESS",     "CANCELLED")),
-            Map.entry("IN_PROGRESS",     Set.of("COMPLETE",        "INCOMPLETE")),
-            Map.entry("COMPLETE",        Set.of("DISPUTED",        "RELEASED")),
-            Map.entry("INCOMPLETE",      Set.of("DISPUTED",        "RELEASED")),
-            Map.entry("DISPUTED",        Set.of("RELEASED",        "REFUNDED")),
-            Map.entry("RELEASED",        Set.of("SETTLED")),
-            Map.entry("REFUNDED",        Set.of()),
-            Map.entry("SETTLED",         Set.of()),
-            Map.entry("CANCELLED",       Set.of())
+            Map.entry("POSTED",           Set.of("NEGOTIATING",   "CANCELLED")),
+            Map.entry("NEGOTIATING",      Set.of("AGREED",        "POSTED",  "CANCELLED")),
+            Map.entry("AGREED",           Set.of("ESCROW_HELD",   "CANCELLED")),
+            Map.entry("ESCROW_HELD",      Set.of("IN_PROGRESS",   "CANCELLED")),
+            Map.entry("IN_PROGRESS",      Set.of("PENDING_APPROVAL", "INCOMPLETE")),
+            Map.entry("PENDING_APPROVAL", Set.of("DISPUTED",      "RELEASED")),
+            Map.entry("INCOMPLETE",       Set.of("DISPUTED",      "RELEASED")),
+            Map.entry("DISPUTED",         Set.of("RELEASED",      "REFUNDED")),
+            Map.entry("RELEASED",         Set.of("SETTLED")),
+            Map.entry("REFUNDED",         Set.of()),
+            Map.entry("SETTLED",          Set.of()),
+            Map.entry("CANCELLED",        Set.of())
     );
 
     /** Statuses from which a job may be cancelled by the Requester or Admin. */
     private static final Set<String> CANCELLABLE_STATUSES =
-            Set.of("REQUESTED", "PENDING_DEPOSIT", "CONFIRMED");
+            Set.of("POSTED", "NEGOTIATING", "AGREED", "ESCROW_HELD");
 
     private final Firestore firestore;
     private final UserService userService;
@@ -154,7 +155,7 @@ public class JobService {
         Job job = new Job();
         job.setJobId(jobId);
         job.setRequesterId(requesterId);
-        job.setStatus("REQUESTED");
+        job.setStatus("POSTED");
         job.setScope(req.getScope());
         job.setPropertyAddress(propertyAddress);
         job.setPropertyCoords(geo.coords());
@@ -165,11 +166,14 @@ public class JobService {
         job.setCompletionImageIds(Collections.emptyList());
         job.setDisputeImageIds(Collections.emptyList());
         job.setContactedWorkerIds(new ArrayList<>());
-        job.setSimultaneousOfferWorkerIds(new ArrayList<>());
+        job.setRejectedWorkerIds(new ArrayList<>());
         job.setSelectedWorkerIds(req.getSelectedWorkerIds());
-        job.setOfferRound(0);
         job.setCannotCompleteCountThisJob(0);
-        job.setRequestedAt(now);
+        job.setApprovalWindowHours(2);
+        if (req.getPostedPriceCents() != null) {
+            job.setPostedPriceCents(req.getPostedPriceCents());
+        }
+        job.setPostedAt(now);
         job.setCreatedAt(now);
         job.setUpdatedAt(now);
 
@@ -479,8 +483,8 @@ public class JobService {
         log.info("Job {} cancelled from {} by {} ({})", jobId, previousStatus, actorUid,
                 cancelledBy);
 
-        // Cancellation fee applies when the job was already CONFIRMED (spec: $10 + 13% HST).
-        boolean feeCharged = "CONFIRMED".equals(previousStatus);
+        // Cancellation fee applies when the job was already ESCROW_HELD (spec: $10 + 13% HST).
+        boolean feeCharged = "ESCROW_HELD".equals(previousStatus);
         double feeCAD = feeCharged ? 11.30 : 0.0;
         notificationService.sendCancellationEmail(
                 job.getRequesterId(), job.getWorkerId(), feeCharged, feeCAD, jobId);
@@ -507,8 +511,8 @@ public class JobService {
         switch (key) {
 
             // Worker-only transitions.
-            case "CONFIRMED->IN_PROGRESS",
-                 "IN_PROGRESS->COMPLETE" -> {
+            case "ESCROW_HELD->IN_PROGRESS",
+                 "IN_PROGRESS->PENDING_APPROVAL" -> {
                 if (!actorUid.equals(job.getWorkerId())) {
                     throw new AccessDeniedException(
                             "Only the assigned Worker may perform this transition");
@@ -523,17 +527,18 @@ public class JobService {
                 }
             }
 
-            // Requester-only (within 2-hour dispute window for COMPLETE).
-            case "COMPLETE->DISPUTED" -> {
+            // Requester-only (within the approval window after PENDING_APPROVAL).
+            case "PENDING_APPROVAL->DISPUTED" -> {
                 if (!actorUid.equals(job.getRequesterId())) {
                     throw new AccessDeniedException("Only the Requester may initiate a dispute");
                 }
-                // Enforce 2-hour dispute window.
-                if (job.getCompletedAt() != null) {
-                    long elapsed = Timestamp.now().getSeconds() - job.getCompletedAt().getSeconds();
-                    if (elapsed > 2L * 3600) {
+                // Enforce the configurable approval window.
+                if (job.getPendingApprovalAt() != null) {
+                    long windowSecs = (long) job.getApprovalWindowHours() * 3600;
+                    long elapsed    = Timestamp.now().getSeconds() - job.getPendingApprovalAt().getSeconds();
+                    if (elapsed > windowSecs) {
                         throw new InvalidTransitionException(
-                                "The 2-hour dispute window has expired");
+                                "The dispute window has expired");
                     }
                 }
             }
@@ -555,11 +560,12 @@ public class JobService {
                 }
             }
 
-            // COMPLETE->RELEASED comes from the system (auto-release timer or ratings).
-            case "COMPLETE->RELEASED" -> {
-                if (!isAdmin && !"system".equals(actorUid)) {
+            // PENDING_APPROVAL->RELEASED: Requester explicit approval or system auto-release.
+            case "PENDING_APPROVAL->RELEASED" -> {
+                if (!isAdmin && !"system".equals(actorUid)
+                        && !actorUid.equals(job.getRequesterId())) {
                     throw new AccessDeniedException(
-                            "Payment release is handled automatically by the system");
+                            "Payment release requires Requester approval or system auto-release");
                 }
             }
 
@@ -579,19 +585,21 @@ public class JobService {
     private void applyLifecycleTimestamp(Map<String, Object> updates, String toStatus) {
         Timestamp now = Timestamp.now();
         switch (toStatus) {
-            case "CONFIRMED"   -> updates.put("confirmedAt",   now);
-            case "IN_PROGRESS" -> updates.put("inProgressAt",  now);
-            case "COMPLETE"    -> {
-                updates.put("completedAt", now);
-                // Auto-release fires 4 hours after completion if no dispute filed.
+            case "ESCROW_HELD"      -> updates.put("escrowHeldAt",       now);
+            case "IN_PROGRESS"      -> updates.put("inProgressAt",       now);
+            case "PENDING_APPROVAL" -> {
+                updates.put("pendingApprovalAt", now);
+                // Auto-release fires after the approval window if Requester hasn't acted.
+                // Default window is 2 hours; respects job.approvalWindowHours when set.
                 updates.put("autoReleaseAt",
-                        Timestamp.ofTimeSecondsAndNanos(now.getSeconds() + 4L * 3600, 0));
+                        Timestamp.ofTimeSecondsAndNanos(now.getSeconds() + 2L * 3600, 0));
             }
             case "RELEASED"  -> updates.put("releasedAt",         now);
             case "REFUNDED"  -> updates.put("refundedAt",         now);
             case "DISPUTED"  -> updates.put("disputeInitiatedAt", now);
             case "CANCELLED" -> updates.put("cancelledAt",        now);
-            // SETTLED, PENDING_DEPOSIT, INCOMPLETE: no dedicated lifecycle timestamp.
+            // POSTED, NEGOTIATING, AGREED: timestamps set by OfferService / JobController.
+            // INCOMPLETE, SETTLED: no dedicated lifecycle timestamp.
         }
     }
 
@@ -600,8 +608,8 @@ public class JobService {
      * Called AFTER the Firestore transaction commits.
      */
     private void handleSideEffects(String jobId, String toStatus, String actorUid) {
-        // Schedule 4-hour auto-release Quartz timer when a job reaches COMPLETE.
-        if ("COMPLETE".equals(toStatus)) {
+        // Schedule auto-release Quartz timer when a job reaches PENDING_APPROVAL.
+        if ("PENDING_APPROVAL".equals(toStatus)) {
             scheduleAutoRelease(jobId);
         }
         // Notification stub — wired in P1-17/P1-18.
@@ -644,8 +652,8 @@ public class JobService {
      * propagate back here.
      */
     private void notifyTransition(String jobId, String toStatus, String actorUid) {
-        if (!"IN_PROGRESS".equals(toStatus) && !"COMPLETE".equals(toStatus)) {
-            return; // other statuses handled elsewhere (CONFIRMED → WebhookController, etc.)
+        if (!"IN_PROGRESS".equals(toStatus) && !"PENDING_APPROVAL".equals(toStatus)) {
+            return; // other statuses handled elsewhere (ESCROW_HELD → WebhookController, etc.)
         }
         try {
             Job job = getJob(jobId);
@@ -715,15 +723,20 @@ public class JobService {
 
     /**
      * Retrieves a job and validates the caller is allowed to see it.
-     * Requester sees own jobs; Worker sees jobs they are assigned to; Admin sees all.
+     * Requester sees own jobs; assigned Worker sees their job; matched Workers (in
+     * matchedWorkerIds) can read POSTED/NEGOTIATING jobs so they can submit offers;
+     * Admin sees all.
      */
     public Job getJobForCaller(String jobId, AuthenticatedUser caller) {
         Job job = getJob(jobId);
-        boolean isRequester = job.getRequesterId().equals(caller.uid());
-        boolean isWorker    = caller.uid().equals(job.getWorkerId());
-        boolean isAdmin     = caller.hasRole("admin");
+        boolean isRequester    = job.getRequesterId().equals(caller.uid());
+        boolean isAssigned     = caller.uid().equals(job.getWorkerId());
+        boolean isMatchedWorker = caller.hasRole("worker")
+                && job.getMatchedWorkerIds() != null
+                && job.getMatchedWorkerIds().contains(caller.uid());
+        boolean isAdmin        = caller.hasRole("admin");
 
-        if (!isRequester && !isWorker && !isAdmin) {
+        if (!isRequester && !isAssigned && !isMatchedWorker && !isAdmin) {
             throw new org.springframework.security.access.AccessDeniedException(
                     "You do not have access to this job");
         }
