@@ -69,6 +69,9 @@ desktop.ini
 !.env.example
 secrets/
 credentials/
+*-key.json
+*-service-account.json
+gha-deploy-key.json
 
 # ── Logs ─────────────────────────────────────────────────────────
 logs/
