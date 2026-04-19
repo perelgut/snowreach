@@ -4382,3 +4382,20 @@ Updated `ALL_STATUSES` to:
 Updated `STATE_LABELS` keys to match: POSTED, NEGOTIATING, AGREED, ESCROW_HELD, IN_PROGRESS, PENDING_APPROVAL, RELEASED.
 
 Committed as hotfix `f7e60f8`. No test changes needed (admin UI is not covered by the backend test suite).
+
+---
+
+## 2026-04-19 — Hotfix: Photo upload field name mismatch
+
+### Problem found during emulator e2e testing (Step 5-F)
+
+Uploading a 2 MB PNG as a completion photo failed. Root cause: `api.js` was sending the multipart file under field name `"photo"` (`formData.append('photo', file)`) but `StorageController` declares `@RequestParam("file")`. Spring rejects the request with 400 because the expected `"file"` part is missing — the file size limit (10 MB) was never reached.
+
+### Fix
+
+Changed `frontend/src/services/api.js` `uploadJobPhoto()`:
+```js
+formData.append('file', file)   // was: 'photo'
+```
+
+Committed as `102cc4d`. `StorageControllerTest` already uses `"file"` in its `testPhoto()` helper — the test was correct, only the production API client was wrong.
