@@ -3,5 +3,15 @@
     "default": "yosnowmow-dev",
     "prod": "yosnowmow-prod",
     "audit": "yosnowmow-audit"
-  }
+  },
+  "targets": {
+    "yosnowmow-dev": {
+      "hosting": {
+        "yosnowmow-prod": [
+          "yosnowmow-prod"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

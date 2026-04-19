@@ -9,7 +9,7 @@ import App from './App.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <BrowserRouter basename="/YoSnowMow">
+    <BrowserRouter>
       {/* AuthProvider must be outside MockStateProvider so auth state is
           available to all providers and components in the tree. */}
       <AuthProvider>
