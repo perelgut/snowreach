@@ -46,9 +46,20 @@ export default function PostJob() {
   const [searching, setSearching] = useState(false)
   const [found, setFound] = useState(false)
   const [form, setForm] = useState({
-    address: '', propertyType: 'House', driveSize: 'Medium',
+    unitNumber: '', streetNumber: '', streetName: '',
+    city: '', province: 'ON', postalCode: '',
+    propertyType: 'House', driveSize: 'Medium',
     services: {}, schedule: 'asap', date: '', time: '', notes: '',
   })
+
+  // Assemble the full address string for the API and review screen
+  const fullAddress = [
+    form.unitNumber.trim()
+      ? `Unit ${form.unitNumber.trim()}, ${form.streetNumber.trim()} ${form.streetName.trim()}`
+      : `${form.streetNumber.trim()} ${form.streetName.trim()}`,
+    form.city.trim(),
+    `${form.province} ${form.postalCode.trim().toUpperCase()}`,
+  ].filter(p => p.replace(/,/g, '').trim()).join(', ')
   const [ack, setAck] = useState(false)
   const [errors, setErrors] = useState({})
 
@@ -72,8 +83,16 @@ export default function PostJob() {
   const total = basePrice + hst
   const workerNet = basePrice - fee + hst
 
+  const CA_POSTAL = /^[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d$/
+
   function nextStep1() {
-    if (!form.address.trim()) { setErrors({ address: 'Address is required' }); return }
+    const e = {}
+    if (!form.streetNumber.trim()) e.streetNumber = 'Street number is required'
+    if (!form.streetName.trim())   e.streetName   = 'Street name is required'
+    if (!form.city.trim())         e.city         = 'City is required'
+    if (!form.postalCode.trim())   e.postalCode   = 'Postal code is required'
+    else if (!CA_POSTAL.test(form.postalCode.trim())) e.postalCode = 'Enter a valid Canadian postal code (e.g. M5V 3A8)'
+    if (Object.keys(e).length) { setErrors(e); return }
     setErrors({})
     setSearching(true)
     setTimeout(() => { setSearching(false); setFound(true) }, 1200)
@@ -119,18 +138,22 @@ export default function PostJob() {
 
       const job = await postJob({
         scope,
-        propertyAddressText:  form.address.trim(),
+        propertyAddressText:  fullAddress,
         startWindowEarliest,
         startWindowLatest:    null,
         notesForWorker,
         personalWorkerOnly:   false,
+        postedPriceCents:     basePrice,
       })
 
       navigate(`/requester/jobs/${job.jobId}`)
 
     } catch (err) {
-      const msg = err.response?.data?.message
-        ?? 'Failed to post job. Please check the address and try again.'
+      const data = err.response?.data
+      const msg = data?.message || data?.error
+        || (typeof data === 'string' ? data : null)
+        || err.message
+        || 'Failed to post job. Please try again.'
       setErrors({ submit: msg })
       setSubmitting(false)
     }
@@ -163,10 +186,47 @@ export default function PostJob() {
       {step === 1 && (
         <div className="card">
           <h2 style={{ fontWeight: 700, marginBottom: 'var(--sp-5)' }}>Where do you need service?</h2>
+
+          <div className="grid-2">
+            <div className="field">
+              <label className="label">Street number *</label>
+              <input className="input" placeholder="123" value={form.streetNumber} onChange={e => set('streetNumber', e.target.value)} />
+              {errors.streetNumber && <span className="error-text">{errors.streetNumber}</span>}
+            </div>
+            <div className="field">
+              <label className="label">Unit / Apt (optional)</label>
+              <input className="input" placeholder="4B" value={form.unitNumber} onChange={e => set('unitNumber', e.target.value)} />
+            </div>
+          </div>
+
           <div className="field">
-            <label className="label">Service address *</label>
-            <input className="input" placeholder="123 Main Street, Toronto, ON" value={form.address} onChange={e => set('address', e.target.value)} />
-            {errors.address && <span className="error-text">{errors.address}</span>}
+            <label className="label">Street name *</label>
+            <input className="input" placeholder="Main Street" value={form.streetName} onChange={e => set('streetName', e.target.value)} />
+            {errors.streetName && <span className="error-text">{errors.streetName}</span>}
+          </div>
+
+          <div className="grid-2">
+            <div className="field">
+              <label className="label">City *</label>
+              <input className="input" placeholder="Toronto" value={form.city} onChange={e => set('city', e.target.value)} />
+              {errors.city && <span className="error-text">{errors.city}</span>}
+            </div>
+            <div className="field">
+              <label className="label">Province *</label>
+              <select className="input" value={form.province} onChange={e => set('province', e.target.value)}>
+                {['AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT'].map(p =>
+                  <option key={p} value={p}>{p}</option>
+                )}
+              </select>
+            </div>
+          </div>
+
+          <div className="field">
+            <label className="label">Postal code *</label>
+            <input className="input" placeholder="M5V 3A8" value={form.postalCode}
+              onChange={e => set('postalCode', e.target.value.toUpperCase())}
+              style={{ maxWidth: 140 }} />
+            {errors.postalCode && <span className="error-text">{errors.postalCode}</span>}
           </div>
           <div className="field">
             <label className="label">Property type</label>
@@ -174,8 +234,8 @@ export default function PostJob() {
               <option>House</option><option>Condo / Townhouse</option><option>Commercial</option>
             </select>
           </div>
-          {found && <div className="alert alert-success">✓ 3 Workers available in your area</div>}
-          {searching && <div className="alert alert-info">🔍 Searching for Workers nearby…</div>}
+          {found && <div className="alert alert-success">✓ Address confirmed — Workers will be matched when you post</div>}
+          {searching && <div className="alert alert-info">Validating address…</div>}
           <button className="btn btn-primary btn-full btn-lg" onClick={nextStep1} disabled={searching}>
             {searching ? 'Searching…' : 'Next →'}
           </button>
@@ -186,7 +246,7 @@ export default function PostJob() {
       {step === 2 && (
         <div className="card">
           <h2 style={{ fontWeight: 700, marginBottom: 4 }}>What services do you need?</h2>
-          <p style={{ fontSize: 13, color: 'var(--gray-400)', marginBottom: 'var(--sp-5)' }}>Select a service, then choose a size to set your suggested price.</p>
+          <p style={{ fontSize: 13, color: 'var(--gray-400)', marginBottom: 'var(--sp-5)' }}>Select a service and size to set your <strong>opening offer price</strong>. Workers may accept or negotiate.</p>
           {errors.services && <div className="alert alert-error">{errors.services}</div>}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', marginBottom: 'var(--sp-5)' }}>
@@ -249,7 +309,7 @@ export default function PostJob() {
               </div>
               <div className="divider" style={{ margin: '8px 0' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
-                <span>Estimated total</span><span style={{ color: 'var(--blue)' }}>{fmt(total)}</span>
+                <span>Opening offer total</span><span style={{ color: 'var(--blue)' }}>{fmt(total)}</span>
               </div>
             </div>
           )}
@@ -299,7 +359,7 @@ export default function PostJob() {
         <div className="card">
           <h2 style={{ fontWeight: 700, marginBottom: 'var(--sp-5)' }}>Review & Post</h2>
           <div style={{ background: 'var(--gray-100)', borderRadius: 8, padding: 'var(--sp-4)', marginBottom: 'var(--sp-5)', fontSize: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div><strong>Address:</strong> {form.address}</div>
+            <div><strong>Address:</strong> {fullAddress}</div>
             <div><strong>Services:</strong></div>
             {selectedServices.map(s => {
               const sizeObj = s.sizes.find(sz => sz.key === form.services[s.key])
@@ -314,7 +374,7 @@ export default function PostJob() {
             {form.notes && <div><strong>Notes:</strong> {form.notes}</div>}
           </div>
           <div style={{ background: 'var(--gray-100)', borderRadius: 8, padding: 'var(--sp-4)', marginBottom: 'var(--sp-5)', fontSize: 14 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}><span>Agreed fee</span><span>{fmt(basePrice)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}><span>Your opening offer</span><span>{fmt(basePrice)}</span></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, color: 'var(--gray-500)' }}><span>HST (13%)</span><span>+ {fmt(hst)}</span></div>
             <div className="divider" style={{ margin: '8px 0' }} />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, marginBottom: 4 }}><span>Total charged</span><span style={{ color: 'var(--blue)' }}>{fmt(total)}</span></div>

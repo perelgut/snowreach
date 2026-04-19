@@ -3,9 +3,11 @@ package com.yosnowmow.controller;
 import com.google.firebase.auth.FirebaseAuth;
 import com.yosnowmow.config.SecurityConfig;
 import com.yosnowmow.model.Address;
+import com.yosnowmow.model.Dispute;
 import com.yosnowmow.model.Job;
 import com.yosnowmow.security.AuthenticatedUser;
 import com.yosnowmow.security.RbacInterceptor;
+import com.yosnowmow.service.DisputeService;
 import com.yosnowmow.service.JobService;
 import com.yosnowmow.service.MatchingService;
 import com.yosnowmow.service.PaymentService;
@@ -76,6 +78,7 @@ class JobControllerTest {
     @MockBean private JobService      jobService;
     @MockBean private MatchingService matchingService;
     @MockBean private PaymentService  paymentService;
+    @MockBean private DisputeService  disputeService;
 
     /** Satisfies FirebaseTokenFilter's constructor dependency in the @WebMvcTest slice. */
     @MockBean private FirebaseAuth    firebaseAuth;
@@ -84,7 +87,7 @@ class JobControllerTest {
     void setUp() {
         // Default stub for endpoints that call getJob() for their response body.
         // Individual tests override this where the returned status matters.
-        when(jobService.getJob(JOB_ID)).thenReturn(makeJob(JOB_ID, "REQUESTED"));
+        when(jobService.getJob(JOB_ID)).thenReturn(makeJob(JOB_ID, "POSTED"));
     }
 
     // ── POST /api/jobs ─────────────────────────────────────────────────────────
@@ -92,7 +95,7 @@ class JobControllerTest {
     @Test
     @DisplayName("POST /api/jobs: requester → 201, Worker matching triggered")
     void postJob_asRequester_returns201_andStartsMatching() throws Exception {
-        Job created = makeJob(JOB_ID, "REQUESTED");
+        Job created = makeJob(JOB_ID, "POSTED");
         when(jobService.createJob(any(), any())).thenReturn(created);
 
         mockMvc.perform(post(JOBS_BASE)
@@ -125,10 +128,10 @@ class JobControllerTest {
     // ── GET /api/jobs/{jobId} ──────────────────────────────────────────────────
 
     @Test
-    @DisplayName("GET /api/jobs/{id}: Worker BEFORE CONFIRMED → propertyAddress scrubbed from response")
+    @DisplayName("GET /api/jobs/{id}: Worker BEFORE ESCROW_HELD → propertyAddress scrubbed from response")
     void getJob_workerBeforeConfirmed_propertyAddressHidden() throws Exception {
         // spy so we can verify the controller called setPropertyAddress(null)
-        Job job = spy(makeJob(JOB_ID, "REQUESTED"));
+        Job job = spy(makeJob(JOB_ID, "POSTED"));
         when(jobService.getJobForCaller(eq(JOB_ID), any())).thenReturn(job);
 
         mockMvc.perform(get(JOBS_BASE + "/" + JOB_ID)
@@ -140,9 +143,9 @@ class JobControllerTest {
     }
 
     @Test
-    @DisplayName("GET /api/jobs/{id}: Worker AT CONFIRMED → propertyAddress NOT scrubbed")
+    @DisplayName("GET /api/jobs/{id}: Worker AT ESCROW_HELD → propertyAddress NOT scrubbed")
     void getJob_workerAtConfirmed_propertyAddressVisible() throws Exception {
-        Job job = spy(makeJob(JOB_ID, "CONFIRMED"));
+        Job job = spy(makeJob(JOB_ID, "ESCROW_HELD"));
         when(jobService.getJobForCaller(eq(JOB_ID), any())).thenReturn(job);
 
         mockMvc.perform(get(JOBS_BASE + "/" + JOB_ID)
@@ -155,7 +158,7 @@ class JobControllerTest {
     @Test
     @DisplayName("GET /api/jobs/{id}: Requester always receives full job details")
     void getJob_requester_receivesFullJob() throws Exception {
-        Job job = spy(makeJob(JOB_ID, "REQUESTED"));
+        Job job = spy(makeJob(JOB_ID, "POSTED"));
         when(jobService.getJobForCaller(eq(JOB_ID), any())).thenReturn(job);
 
         mockMvc.perform(get(JOBS_BASE + "/" + JOB_ID)
@@ -186,11 +189,11 @@ class JobControllerTest {
         when(jobService.listJobs(any(), any(), any(), anyInt())).thenReturn(List.of());
 
         mockMvc.perform(get(JOBS_BASE)
-                    .param("status", "REQUESTED")
+                    .param("status", "POSTED")
                     .with(asUser(ADM_UID, "admin")))
                .andExpect(status().isOk());
 
-        verify(jobService).listJobs(eq("REQUESTED"), isNull(), isNull(), eq(20));
+        verify(jobService).listJobs(eq("POSTED"), isNull(), isNull(), eq(20));
         verify(jobService, never()).listJobsForUser(any());
     }
 
@@ -221,15 +224,15 @@ class JobControllerTest {
     // ── POST /api/jobs/{id}/complete ───────────────────────────────────────────
 
     @Test
-    @DisplayName("POST /api/jobs/{id}/complete: Worker → 200, COMPLETE transition")
+    @DisplayName("POST /api/jobs/{id}/complete: Worker → 200, PENDING_APPROVAL transition")
     void completeJob_asWorker_returns200() throws Exception {
-        when(jobService.transition(eq(JOB_ID), eq("COMPLETE"), eq(WKR_UID), eq(false)))
-            .thenReturn(makeJob(JOB_ID, "COMPLETE"));
+        when(jobService.transition(eq(JOB_ID), eq("PENDING_APPROVAL"), eq(WKR_UID), eq(false)))
+            .thenReturn(makeJob(JOB_ID, "PENDING_APPROVAL"));
 
         mockMvc.perform(post(JOBS_BASE + "/" + JOB_ID + "/complete")
                     .with(asUser(WKR_UID, "worker")))
                .andExpect(status().isOk())
-               .andExpect(jsonPath("$.status").value("COMPLETE"));
+               .andExpect(jsonPath("$.status").value("PENDING_APPROVAL"));
     }
 
     // ── POST /api/jobs/{id}/cannot-complete ────────────────────────────────────
@@ -253,16 +256,19 @@ class JobControllerTest {
     // ── POST /api/jobs/{id}/dispute ────────────────────────────────────────────
 
     @Test
-    @DisplayName("POST /api/jobs/{id}/dispute: Requester on COMPLETE job → 200, DISPUTED transition")
-    void disputeJob_asRequester_returns200() throws Exception {
-        when(jobService.getJobForCaller(eq(JOB_ID), any())).thenReturn(makeJob(JOB_ID, "COMPLETE"));
-        when(jobService.transition(eq(JOB_ID), eq("DISPUTED"), eq(REQ_UID), eq(false)))
-            .thenReturn(makeJob(JOB_ID, "DISPUTED"));
+    @DisplayName("POST /api/jobs/{id}/dispute: Requester with statement → 201, dispute opened")
+    void disputeJob_asRequester_returns201() throws Exception {
+        Dispute dispute = makeDispute(JOB_ID);
+        when(disputeService.openDispute(eq(JOB_ID), eq(REQ_UID), any())).thenReturn(dispute);
 
         mockMvc.perform(post(JOBS_BASE + "/" + JOB_ID + "/dispute")
-                    .with(asUser(REQ_UID, "requester")))
-               .andExpect(status().isOk())
-               .andExpect(jsonPath("$.status").value("DISPUTED"));
+                    .with(asUser(REQ_UID, "requester"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                            {"statement": "The job was not completed as agreed."}
+                            """))
+               .andExpect(status().isCreated())
+               .andExpect(jsonPath("$.jobId").value(JOB_ID));
     }
 
     // ── POST /api/jobs/{id}/release ────────────────────────────────────────────
@@ -295,9 +301,9 @@ class JobControllerTest {
     // ── POST /api/jobs/{id}/cancel ─────────────────────────────────────────────
 
     @Test
-    @DisplayName("POST /api/jobs/{id}/cancel: from REQUESTED → 200, no Stripe call")
+    @DisplayName("POST /api/jobs/{id}/cancel: from POSTED → 200, no Stripe call")
     void cancelJob_fromRequested_noStripeCallNeeded() throws Exception {
-        when(jobService.cancelJob(eq(JOB_ID), eq(REQ_UID), eq(false))).thenReturn("REQUESTED");
+        when(jobService.cancelJob(eq(JOB_ID), eq(REQ_UID), eq(false))).thenReturn("POSTED");
 
         mockMvc.perform(post(JOBS_BASE + "/" + JOB_ID + "/cancel")
                     .with(asUser(REQ_UID, "requester")))
@@ -309,9 +315,9 @@ class JobControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/jobs/{id}/cancel: from CONFIRMED → paymentService.cancelWithFee called")
+    @DisplayName("POST /api/jobs/{id}/cancel: from ESCROW_HELD → paymentService.cancelWithFee called")
     void cancelJob_fromConfirmed_callsCancelWithFee() throws Exception {
-        when(jobService.cancelJob(eq(JOB_ID), eq(REQ_UID), eq(false))).thenReturn("CONFIRMED");
+        when(jobService.cancelJob(eq(JOB_ID), eq(REQ_UID), eq(false))).thenReturn("ESCROW_HELD");
 
         mockMvc.perform(post(JOBS_BASE + "/" + JOB_ID + "/cancel")
                     .with(asUser(REQ_UID, "requester")))
@@ -323,9 +329,9 @@ class JobControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/jobs/{id}/cancel: from PENDING_DEPOSIT → paymentService.cancelPaymentIntent called")
+    @DisplayName("POST /api/jobs/{id}/cancel: from AGREED → paymentService.cancelPaymentIntent called")
     void cancelJob_fromPendingDeposit_callsCancelPaymentIntent() throws Exception {
-        when(jobService.cancelJob(eq(JOB_ID), eq(REQ_UID), eq(false))).thenReturn("PENDING_DEPOSIT");
+        when(jobService.cancelJob(eq(JOB_ID), eq(REQ_UID), eq(false))).thenReturn("AGREED");
 
         mockMvc.perform(post(JOBS_BASE + "/" + JOB_ID + "/cancel")
                     .with(asUser(REQ_UID, "requester")))
@@ -357,5 +363,13 @@ class JobControllerTest {
         job.setStatus(status);
         job.setPropertyAddress(new Address("123 Test St, Toronto, ON"));
         return job;
+    }
+
+    /** Builds a minimal {@link Dispute} suitable for use as a service-method return value. */
+    private static Dispute makeDispute(String jobId) {
+        Dispute dispute = new Dispute();
+        dispute.setJobId(jobId);
+        dispute.setStatus("OPEN");
+        return dispute;
     }
 }

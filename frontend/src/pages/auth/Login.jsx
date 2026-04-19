@@ -55,6 +55,20 @@ function defaultPathForRoles(roles = []) {
   return '/requester'
 }
 
+/**
+ * Returns `from` only if the user's roles permit that section.
+ * Prevents an admin being sent to /requester just because the app
+ * root redirected there before they signed in.
+ */
+function resolveDestination(from, roles = []) {
+  if (from) {
+    if (from.startsWith('/admin')     && roles.includes('admin'))     return from
+    if (from.startsWith('/worker')    && roles.includes('worker'))    return from
+    if (from.startsWith('/requester') && roles.includes('requester')) return from
+  }
+  return defaultPathForRoles(roles)
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -78,8 +92,7 @@ export default function Login() {
   //   2. Sign-in just completed and AuthContext finished loading the profile.
   useEffect(() => {
     if (!loading && currentUser && userProfile) {
-      const destination = from || defaultPathForRoles(userProfile.roles)
-      navigate(destination, { replace: true })
+      navigate(resolveDestination(from, userProfile.roles), { replace: true })
     }
   }, [loading, currentUser, userProfile, navigate, from])
 

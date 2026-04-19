@@ -16,6 +16,7 @@ import { createContext, useEffect, useState } from 'react'
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   signOut as firebaseSignOut,
 } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
@@ -64,6 +65,18 @@ export function AuthProvider({ children }) {
   const signIn = (email, password) =>
     signInWithEmailAndPassword(auth, email, password)
 
+  /** Creates a new Firebase Auth user.  Returns the Firebase UserCredential. */
+  const signUp = (email, password) =>
+    createUserWithEmailAndPassword(auth, email, password)
+
+  /** Re-fetches the Firestore profile for the current user. */
+  const refreshProfile = async () => {
+    if (auth.currentUser) {
+      const snap = await getDoc(doc(db, 'users', auth.currentUser.uid))
+      setUserProfile(snap.exists() ? snap.data() : null)
+    }
+  }
+
   /** Signs out the current user and clears profile state immediately. */
   const signOut = async () => {
     setUserProfile(null)
@@ -71,7 +84,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ currentUser, userProfile, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ currentUser, userProfile, loading, signIn, signUp, refreshProfile, signOut }}>
       {children}
     </AuthContext.Provider>
   )

@@ -104,6 +104,13 @@
             <version>${google-maps-services.version}</version>
         </dependency>
 
+        <!-- ── Apache Commons CSV (compliance report export P3-07) ── -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-csv</artifactId>
+            <version>1.10.0</version>
+        </dependency>
+
         <!-- ── Test ─────────────────────────────────────────────── -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

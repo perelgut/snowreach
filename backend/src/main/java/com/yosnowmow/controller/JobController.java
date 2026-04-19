@@ -2,9 +2,12 @@ package com.yosnowmow.controller;
 
 import com.yosnowmow.dto.CannotCompleteRequest;
 import com.yosnowmow.dto.CreateJobRequest;
+import com.yosnowmow.dto.DisputeRequest;
+import com.yosnowmow.model.Dispute;
 import com.yosnowmow.model.Job;
 import com.yosnowmow.security.AuthenticatedUser;
 import com.yosnowmow.security.RequiresRole;
+import com.yosnowmow.service.DisputeService;
 import com.yosnowmow.service.JobService;
 import com.yosnowmow.service.MatchingService;
 import com.yosnowmow.service.PaymentService;
@@ -50,16 +53,19 @@ import java.util.Map;
 @RequestMapping("/api/jobs")
 public class JobController {
 
-    private final JobService jobService;
+    private final JobService     jobService;
     private final MatchingService matchingService;
-    private final PaymentService paymentService;
+    private final PaymentService  paymentService;
+    private final DisputeService  disputeService;
 
     public JobController(JobService jobService,
                          MatchingService matchingService,
-                         PaymentService paymentService) {
-        this.jobService = jobService;
+                         PaymentService paymentService,
+                         DisputeService disputeService) {
+        this.jobService      = jobService;
         this.matchingService = matchingService;
-        this.paymentService = paymentService;
+        this.paymentService  = paymentService;
+        this.disputeService  = disputeService;
     }
 
     // ── P1-08: Create and read ────────────────────────────────────────────────
@@ -126,7 +132,7 @@ public class JobController {
     // ── P1-13: State-machine transitions ─────────────────────────────────────
 
     /**
-     * Worker starts the job — transitions CONFIRMED → IN_PROGRESS.
+     * Worker starts the job — transitions ESCROW_HELD → IN_PROGRESS.
      *
      * Only the assigned Worker may call this endpoint.
      * Permission is enforced inside {@code JobService.transition()}.
@@ -143,10 +149,10 @@ public class JobController {
     }
 
     /**
-     * Worker marks the job complete — transitions IN_PROGRESS → COMPLETE.
+     * Worker marks the job complete — transitions IN_PROGRESS → PENDING_APPROVAL.
      *
      * Only the assigned Worker may call this endpoint.
-     * Scheduling the 4-hour auto-release Quartz timer is a side effect inside
+     * Scheduling the approval-window auto-release Quartz timer is a side effect inside
      * {@code JobService.transition()}.
      */
     @PostMapping("/{jobId}/complete")
@@ -155,9 +161,27 @@ public class JobController {
             @PathVariable String jobId,
             @AuthenticationPrincipal AuthenticatedUser caller) {
 
-        Job job = jobService.transition(jobId, "COMPLETE", caller.uid(),
+        Job job = jobService.transition(jobId, "PENDING_APPROVAL", caller.uid(),
                 caller.hasRole("admin"));
         return ResponseEntity.ok(job);
+    }
+
+    /**
+     * Requester explicitly approves a completed job — transitions PENDING_APPROVAL → RELEASED.
+     *
+     * If the Requester does not act within the approval window, the system auto-releases.
+     * After the status transition, the controller triggers the Stripe transfer via
+     * {@code PaymentService.releasePayment()} so the Worker is paid out.
+     */
+    @PostMapping("/{jobId}/approve")
+    @RequiresRole("requester")
+    public ResponseEntity<Job> approveJob(
+            @PathVariable String jobId,
+            @AuthenticationPrincipal AuthenticatedUser caller) {
+
+        jobService.transition(jobId, "RELEASED", caller.uid(), caller.hasRole("admin"));
+        paymentService.releasePayment(jobId);
+        return ResponseEntity.ok(jobService.getJob(jobId));
     }
 
     /**
@@ -185,23 +209,29 @@ public class JobController {
     }
 
     /**
-     * Requester opens a dispute — transitions COMPLETE or INCOMPLETE → DISPUTED.
+     * Requester opens a dispute on a COMPLETE or INCOMPLETE job.
      *
-     * For COMPLETE → DISPUTED, the 2-hour dispute window is validated inside
-     * {@code JobService.transition()}.
+     * Delegates to {@link DisputeService#openDispute} which:
+     * <ul>
+     *   <li>Creates a Dispute document in Firestore</li>
+     *   <li>Transitions the job to DISPUTED via the validated state machine</li>
+     *   <li>Notifies the Requester, Worker, and Admin</li>
+     * </ul>
+     *
+     * For COMPLETE → DISPUTED, the 2-hour dispute window is enforced in DisputeService
+     * and again in the JobService state machine guard.
+     *
+     * @return 201 Created with the newly created Dispute document
      */
     @PostMapping("/{jobId}/dispute")
     @RequiresRole("requester")
-    public ResponseEntity<Job> disputeJob(
+    public ResponseEntity<Dispute> disputeJob(
             @PathVariable String jobId,
-            @AuthenticationPrincipal AuthenticatedUser caller) {
+            @AuthenticationPrincipal AuthenticatedUser caller,
+            @Valid @RequestBody DisputeRequest req) {
 
-        // Determine current status to route to the correct transition.
-        Job current = jobService.getJobForCaller(jobId, caller);
-        String targetFrom = current.getStatus(); // COMPLETE or INCOMPLETE
-
-        Job job = jobService.transition(jobId, "DISPUTED", caller.uid(), false);
-        return ResponseEntity.ok(job);
+        Dispute dispute = disputeService.openDispute(jobId, caller.uid(), req);
+        return ResponseEntity.status(HttpStatus.CREATED).body(dispute);
     }
 
     /**
@@ -227,11 +257,11 @@ public class JobController {
     /**
      * Cancels a job.  The caller must be the Requester who owns the job or an Admin.
      *
-     * <p>Cancellation rules (spec §6):
+     * <p>Cancellation rules (spec §6 / v1.1):
      * <ul>
-     *   <li>REQUESTED       → CANCELLED: free (no payment collected yet)</li>
-     *   <li>PENDING_DEPOSIT → CANCELLED: Stripe PaymentIntent is cancelled</li>
-     *   <li>CONFIRMED       → CANCELLED: $10 CAD + HST fee charged; remainder refunded</li>
+     *   <li>POSTED / NEGOTIATING → CANCELLED: free (no payment collected yet)</li>
+     *   <li>AGREED      → CANCELLED: Stripe PaymentIntent is cancelled</li>
+     *   <li>ESCROW_HELD → CANCELLED: $10 CAD + HST fee charged; remainder refunded</li>
      *   <li>IN_PROGRESS or later: not permitted — use the dispute process</li>
      * </ul>
      *
@@ -251,9 +281,9 @@ public class JobController {
 
         // Trigger appropriate Stripe operation based on the previous status.
         switch (previousStatus) {
-            case "CONFIRMED"       -> paymentService.cancelWithFee(jobId);
-            case "PENDING_DEPOSIT" -> paymentService.cancelPaymentIntent(jobId);
-            // REQUESTED: no payment was collected — nothing to do.
+            case "ESCROW_HELD" -> paymentService.cancelWithFee(jobId);
+            case "AGREED"      -> paymentService.cancelPaymentIntent(jobId);
+            // POSTED / NEGOTIATING: no payment was collected — nothing to do.
         }
 
         return ResponseEntity.ok(jobService.getJob(jobId));
@@ -261,9 +291,10 @@ public class JobController {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    /** Worker address visibility: hide until escrow is held. */
     private boolean isConfirmedOrLater(String status) {
         return switch (status) {
-            case "CONFIRMED", "IN_PROGRESS", "COMPLETE", "INCOMPLETE",
+            case "ESCROW_HELD", "IN_PROGRESS", "PENDING_APPROVAL", "INCOMPLETE",
                  "DISPUTED", "RELEASED", "REFUNDED", "SETTLED" -> true;
             default -> false;
         };

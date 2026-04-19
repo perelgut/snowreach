@@ -85,19 +85,22 @@ public class PaymentService {
     @Value("${yosnowmow.stripe.webhook-secret}")
     private String webhookSecret;
 
-    private final Firestore firestore;
-    private final JobService jobService;
-    private final AuditLogService auditLogService;
-    private final NotificationService notificationService;
+    private final Firestore              firestore;
+    private final JobService             jobService;
+    private final AuditLogService        auditLogService;
+    private final NotificationService    notificationService;
+    private final FraudDetectionService  fraudDetectionService;
 
     public PaymentService(Firestore firestore,
                           JobService jobService,
                           AuditLogService auditLogService,
-                          NotificationService notificationService) {
-        this.firestore = firestore;
-        this.jobService = jobService;
-        this.auditLogService = auditLogService;
-        this.notificationService = notificationService;
+                          NotificationService notificationService,
+                          FraudDetectionService fraudDetectionService) {
+        this.firestore            = firestore;
+        this.jobService           = jobService;
+        this.auditLogService      = auditLogService;
+        this.notificationService  = notificationService;
+        this.fraudDetectionService = fraudDetectionService;
     }
 
     /** Sets the Stripe API key once Spring has injected the {@code @Value} fields. */
@@ -129,9 +132,9 @@ public class PaymentService {
         try {
             Job job = jobService.getJob(jobId);
 
-            if (!"PENDING_DEPOSIT".equals(job.getStatus())) {
+            if (!"AGREED".equals(job.getStatus())) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "Job is not awaiting deposit (status: " + job.getStatus() + ")");
+                        "Job is not awaiting escrow deposit (status: " + job.getStatus() + ")");
             }
             if (job.getTotalAmountCAD() == null) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -463,6 +466,16 @@ public class PaymentService {
                         "Worker has not completed Stripe Connect onboarding");
             }
 
+            // ── Fraud check (P3-05) ─────────────────────────────────────────────
+            // Evaluate all fraud rules before releasing funds.  If any rule
+            // triggers, checkBeforePayout() creates a fraudFlags document and
+            // returns false — the payout is paused until an Admin reviews.
+            boolean isSafe = fraudDetectionService.checkBeforePayout(jobId);
+            if (!isSafe) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "Payout paused pending fraud review — see Admin fraud flags dashboard");
+            }
+
             // Transfer amount = workerPayoutCAD (commission already deducted by DispatchService).
             // HST is included in the payout; the worker remits to CRA themselves.
             long payoutCents = Math.round(job.getWorkerPayoutCAD() * 100);
@@ -564,6 +577,164 @@ public class PaymentService {
             log.error("Stripe error refunding job {}: {}", jobId, e.getMessage(), e);
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
                     "Refund failed");
+        }
+    }
+
+    // ── Split payment — P2-03 ─────────────────────────────────────────────────
+
+    /**
+     * Resolves a SPLIT dispute by transferring the Worker's proportional share
+     * and refunding the remainder to the Requester.
+     *
+     * <p>The full job amount was already captured into the platform's Stripe balance
+     * at CONFIRMED state.  This method:
+     * <ol>
+     *   <li>Computes amounts:
+     *     <ul>
+     *       <li>{@code workerAmountCents = round(netWorkerCents × workerPct / 100) + hstCents}
+     *           — HST always flows to the Worker in full so they can remit to CRA.</li>
+     *       <li>{@code requesterRefundCents = depositAmountCents − workerAmountCents}</li>
+     *     </ul>
+     *   </li>
+     *   <li>Creates a Stripe Transfer to the Worker's Connected account (if > 0).</li>
+     *   <li>Creates a Stripe Refund on the PaymentIntent to the Requester (if > 0).</li>
+     *   <li>Persists {@code stripeTransferId} and {@code stripeRefundId} on the job.</li>
+     *   <li>Transitions the job to RELEASED.</li>
+     *   <li>Audits and notifies both parties with their specific amounts.</li>
+     * </ol>
+     *
+     * <p>At {@code workerPct = 100} the effective outcome matches {@link #releasePayment}
+     * (Worker receives full payout + HST, no refund).
+     * At {@code workerPct = 0} the outcome matches {@link #refundJob} (full refund,
+     * no Worker transfer — but HST is still refunded to the Requester in this case).
+     *
+     * @param jobId      Firestore document ID of the disputed job
+     * @param workerPct  percentage of net worker payout to transfer (0–100)
+     */
+    public void splitPayment(String jobId, int workerPct) {
+        try {
+            Job job = jobService.getJob(jobId);
+
+            if (job.getWorkerId() == null) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "Job has no assigned Worker");
+            }
+            if (job.getWorkerPayoutCAD() == null || job.getTotalAmountCAD() == null) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "Job pricing is not fully set");
+            }
+            if (job.getStripePaymentIntentId() == null) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "Job has no Stripe PaymentIntent");
+            }
+
+            // a. Compute split amounts.
+            // HST always goes to the Worker in full (they must remit to CRA).
+            long netWorkerCents      = Math.round(job.getWorkerPayoutCAD() * 100);
+            long hstCents            = (job.getHstAmountCAD() != null)
+                                       ? Math.round(job.getHstAmountCAD() * 100) : 0L;
+            long depositAmountCents  = Math.round(job.getTotalAmountCAD() * 100);
+
+            long workerAmountCents   = Math.round(netWorkerCents * workerPct / 100.0) + hstCents;
+            long requesterRefundCents = depositAmountCents - workerAmountCents;
+
+            String transferId = null;
+            String refundId   = null;
+
+            // b. Transfer Worker's share (only if non-zero).
+            if (workerAmountCents > 0) {
+                DocumentSnapshot workerDoc = firestore.collection(USERS_COLLECTION)
+                        .document(job.getWorkerId()).get().get();
+
+                User workerUser = workerDoc.exists() ? workerDoc.toObject(User.class) : null;
+                String connectAccountId = (workerUser != null && workerUser.getWorker() != null)
+                        ? workerUser.getWorker().getStripeConnectAccountId()
+                        : null;
+
+                if (connectAccountId == null || connectAccountId.isBlank()) {
+                    log.error("Worker {} has no Stripe Connect account — cannot split payment for job {}",
+                            job.getWorkerId(), jobId);
+                    throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                            "Worker has not completed Stripe Connect onboarding");
+                }
+
+                TransferCreateParams transferParams = TransferCreateParams.builder()
+                        .setAmount(workerAmountCents)
+                        .setCurrency(CURRENCY_CAD)
+                        .setDestination(connectAccountId)
+                        .setTransferGroup(jobId)
+                        .putMetadata("jobId",    jobId)
+                        .putMetadata("workerId", job.getWorkerId())
+                        .putMetadata("type",     "dispute_split_" + workerPct + "pct")
+                        .build();
+
+                Transfer transfer = Transfer.create(transferParams,
+                        RequestOptions.builder()
+                                .setIdempotencyKey("split_transfer_" + jobId)
+                                .build());
+
+                transferId = transfer.getId();
+                auditLogService.write("system", "SPLIT_TRANSFER", "job", jobId,
+                        null, Map.of("transferId", transferId, "amountCents", workerAmountCents));
+                log.info("Split transfer {} ({} ¢ CAD, {}%) to worker {} for job {}",
+                        transferId, workerAmountCents, workerPct, job.getWorkerId(), jobId);
+            } else {
+                log.info("Split {}% — Worker share is zero; skipping transfer for job {}",
+                        workerPct, jobId);
+            }
+
+            // c. Refund Requester's share (only if non-zero).
+            if (requesterRefundCents > 0) {
+                RefundCreateParams refundParams = RefundCreateParams.builder()
+                        .setPaymentIntent(job.getStripePaymentIntentId())
+                        .setAmount(requesterRefundCents)
+                        .putMetadata("jobId",  jobId)
+                        .putMetadata("reason", "dispute_split_" + workerPct + "pct_to_worker")
+                        .build();
+
+                Refund refund = Refund.create(refundParams,
+                        RequestOptions.builder()
+                                .setIdempotencyKey("split_refund_" + jobId)
+                                .build());
+
+                refundId = refund.getId();
+                auditLogService.write("system", "SPLIT_REFUND", "job", jobId,
+                        null, Map.of("refundId", refundId, "amountCents", requesterRefundCents));
+                log.info("Split refund {} ({} ¢ CAD) to requester for job {}",
+                        refundId, requesterRefundCents, jobId);
+            } else {
+                log.info("Split {}% — Requester refund is zero; skipping refund for job {}",
+                        workerPct, jobId);
+            }
+
+            // d. Persist Stripe IDs and transition job to RELEASED.
+            Map<String, Object> extras = new HashMap<>();
+            extras.put("releasedAt", Timestamp.now());
+            if (transferId != null) extras.put("stripeTransferId", transferId);
+            if (refundId   != null) extras.put("stripeRefundId",   refundId);
+            jobService.transitionStatus(jobId, "RELEASED", "system", extras);
+
+            // e. Notify both parties with their specific amounts.
+            double workerAmountCAD    = workerAmountCents / 100.0;
+            double requesterRefundCAD = requesterRefundCents / 100.0;
+
+            notificationService.notifyDisputeResolved(job.getWorkerId(),    jobId, "split");
+            notificationService.notifyDisputeResolved(job.getRequesterId(), jobId, "split");
+
+            log.info("Split payment complete for job {}: worker {} ¢, requester refund {} ¢",
+                    jobId, workerAmountCents, requesterRefundCents);
+
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (StripeException e) {
+            log.error("Stripe error applying split payment for job {}: {}", jobId,
+                    e.getMessage(), e);
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "Split payment failed");
+        } catch (InterruptedException | ExecutionException e) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to apply split payment");
         }
     }
 }

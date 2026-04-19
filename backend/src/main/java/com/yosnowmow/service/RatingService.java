@@ -55,18 +55,21 @@ public class RatingService {
      * (RELEASED, SETTLED) for goodwill feedback even though payment is already settled.
      */
     private static final Set<String> RATEABLE_STATUSES =
-            Set.of("COMPLETE", "RELEASED", "SETTLED");
+            Set.of("PENDING_APPROVAL", "RELEASED", "SETTLED");
 
-    private final Firestore     firestore;
-    private final JobService    jobService;
+    private final Firestore      firestore;
+    private final JobService     jobService;
     private final PaymentService paymentService;
+    private final BadgeService   badgeService;
 
     public RatingService(Firestore firestore,
                          JobService jobService,
-                         PaymentService paymentService) {
+                         PaymentService paymentService,
+                         BadgeService badgeService) {
         this.firestore      = firestore;
         this.jobService     = jobService;
         this.paymentService = paymentService;
+        this.badgeService   = badgeService;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -157,8 +160,8 @@ public class RatingService {
             updateWorkerRating(rateeUid, req.getStars());
         }
 
-        // 6. If both parties have rated and the job is COMPLETE, release payment now.
-        if ("COMPLETE".equals(status)) {
+        // 6. If both parties have rated and the job is PENDING_APPROVAL, release payment now.
+        if ("PENDING_APPROVAL".equals(status)) {
             checkAndRelease(jobId);
         }
 
@@ -272,6 +275,9 @@ public class RatingService {
             }).get();
 
             log.debug("Worker {} average rating updated (new contribution: {} stars)", workerUid, newStars);
+
+            // Re-evaluate badges that depend on rating (TOP_RATED, EXPERIENCED).
+            badgeService.evaluateBadges(workerUid);
 
         } catch (InterruptedException | ExecutionException e) {
             Thread.currentThread().interrupt();

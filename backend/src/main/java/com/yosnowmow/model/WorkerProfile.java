@@ -152,6 +152,14 @@ public class WorkerProfile {
     /** Rolling 90-day count of cannot-complete events. */
     private int cannotCompleteCount90d;
 
+    /**
+     * Rolling 90-day count of jobs where the Requester rejected this Worker.
+     * Incremented by OfferService when a Requester blocks a Worker from a job.
+     * Reset nightly by {@link com.yosnowmow.scheduler.RejectionCountCleanupJob}.
+     * Admin thresholds: 3 = informational, 5 = warning, 10 = critical.
+     */
+    private int jobRejectionCount90d;
+
     // ── Phase 2 ──────────────────────────────────────────────────────────────
 
     private Timestamp onboardingCompletedAt;
@@ -159,12 +167,44 @@ public class WorkerProfile {
     // ── Phase 3 ──────────────────────────────────────────────────────────────
 
     /**
-     * Background check status: "not_submitted" | "pending" | "passed" | "failed"
-     * Default: "not_submitted"
+     * Insurance status.
+     * Values: "NONE" | "PENDING_REVIEW" | "VALID" | "EXPIRING_SOON" | "EXPIRED"
+     * Default: null / absent (Worker has not uploaded a document yet)
+     */
+    private String insuranceStatus;
+
+    /** Firebase Storage download URL to the most-recently uploaded insurance PDF. */
+    private String insuranceDocUrl;
+
+    /**
+     * Timestamp of the most recent insurance renewal reminder email.
+     * Used by {@link com.yosnowmow.scheduler.InsuranceRenewalJob} to enforce
+     * a 7-day minimum gap between reminder sends.
+     */
+    private Timestamp lastInsuranceReminderSent;
+
+    /**
+     * Background check status.
+     * Values: "not_submitted" | "SUBMITTED" | "CLEAR" | "CONSIDER" | "SUSPENDED"
+     * Default: "not_submitted" (until the Worker initiates their check)
      */
     private String backgroundCheckStatus;
 
     private Timestamp backgroundCheckDate;
+
+    /**
+     * Certn order ID returned when the background check is submitted.
+     * Used to correlate Certn webhook callbacks back to this Worker.
+     */
+    private String certnOrderId;
+
+    /**
+     * Whether the Worker is eligible to receive job dispatches.
+     * Defaults to {@code false}; set to {@code true} when background check returns CLEAR.
+     * Admins may also set this directly (e.g., to suspend a Worker).
+     */
+    private boolean isActive;
+
     private Timestamp insuranceDeclaredAt;
     private String insuranceProvider;
     private String insurancePolicyNumber;
@@ -268,6 +308,9 @@ public class WorkerProfile {
     public int getCannotCompleteCount90d() { return cannotCompleteCount90d; }
     public void setCannotCompleteCount90d(int cannotCompleteCount90d) { this.cannotCompleteCount90d = cannotCompleteCount90d; }
 
+    public int getJobRejectionCount90d() { return jobRejectionCount90d; }
+    public void setJobRejectionCount90d(int jobRejectionCount90d) { this.jobRejectionCount90d = jobRejectionCount90d; }
+
     public Timestamp getOnboardingCompletedAt() { return onboardingCompletedAt; }
     public void setOnboardingCompletedAt(Timestamp onboardingCompletedAt) { this.onboardingCompletedAt = onboardingCompletedAt; }
 
@@ -276,6 +319,21 @@ public class WorkerProfile {
 
     public Timestamp getBackgroundCheckDate() { return backgroundCheckDate; }
     public void setBackgroundCheckDate(Timestamp backgroundCheckDate) { this.backgroundCheckDate = backgroundCheckDate; }
+
+    public String getCertnOrderId() { return certnOrderId; }
+    public void setCertnOrderId(String certnOrderId) { this.certnOrderId = certnOrderId; }
+
+    public boolean isActive() { return isActive; }
+    public void setActive(boolean active) { isActive = active; }
+
+    public String getInsuranceStatus() { return insuranceStatus; }
+    public void setInsuranceStatus(String insuranceStatus) { this.insuranceStatus = insuranceStatus; }
+
+    public String getInsuranceDocUrl() { return insuranceDocUrl; }
+    public void setInsuranceDocUrl(String insuranceDocUrl) { this.insuranceDocUrl = insuranceDocUrl; }
+
+    public Timestamp getLastInsuranceReminderSent() { return lastInsuranceReminderSent; }
+    public void setLastInsuranceReminderSent(Timestamp lastInsuranceReminderSent) { this.lastInsuranceReminderSent = lastInsuranceReminderSent; }
 
     public Timestamp getInsuranceDeclaredAt() { return insuranceDeclaredAt; }
     public void setInsuranceDeclaredAt(Timestamp insuranceDeclaredAt) { this.insuranceDeclaredAt = insuranceDeclaredAt; }

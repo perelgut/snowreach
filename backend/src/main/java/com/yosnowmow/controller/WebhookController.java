@@ -10,11 +10,13 @@ import com.stripe.model.EventDataObjectDeserializer;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.StripeObject;
 import com.stripe.net.Webhook;
+import com.yosnowmow.service.BackgroundCheckService;
 import com.yosnowmow.service.JobService;
 import com.yosnowmow.service.NotificationService;
 import com.yosnowmow.service.PaymentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -23,8 +25,11 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
@@ -67,19 +72,25 @@ public class WebhookController {
 
     private static final String STRIPE_EVENTS_COLLECTION = "stripeEvents";
 
-    private final PaymentService paymentService;
-    private final JobService jobService;
-    private final NotificationService notificationService;
-    private final Firestore firestore;
+    private final PaymentService         paymentService;
+    private final JobService             jobService;
+    private final NotificationService    notificationService;
+    private final Firestore              firestore;
+    private final BackgroundCheckService backgroundCheckService;
+
+    @Value("${yosnowmow.certn.webhook-secret:placeholder-set-in-P3-01}")
+    private String certnWebhookSecret;
 
     public WebhookController(PaymentService paymentService,
                               JobService jobService,
                               NotificationService notificationService,
-                              Firestore firestore) {
-        this.paymentService = paymentService;
-        this.jobService = jobService;
-        this.notificationService = notificationService;
-        this.firestore = firestore;
+                              Firestore firestore,
+                              BackgroundCheckService backgroundCheckService) {
+        this.paymentService          = paymentService;
+        this.jobService              = jobService;
+        this.notificationService     = notificationService;
+        this.firestore               = firestore;
+        this.backgroundCheckService  = backgroundCheckService;
     }
 
     /**
@@ -159,8 +170,8 @@ public class WebhookController {
         log.info("Capturing payment for job {} (intent {})", jobId, pi.getId());
         paymentService.capturePayment(pi.getId());
 
-        // Record the deposit timestamp on the job (status stays PENDING_DEPOSIT here —
-        // it will transition to CONFIRMED when payment_intent.succeeded fires next).
+        // Record the deposit timestamp on the job (status stays AGREED here —
+        // it will transition to ESCROW_HELD when payment_intent.succeeded fires next).
         try {
             firestore.collection("jobs").document(jobId).update(
                     "depositReceivedAt", Timestamp.now(),
@@ -187,29 +198,29 @@ public class WebhookController {
         }
 
         try {
-            // Guard: only transition if still in PENDING_DEPOSIT (idempotent).
+            // Guard: only transition if still in AGREED (idempotent).
             var job = jobService.getJob(jobId);
-            if (!"PENDING_DEPOSIT".equals(job.getStatus())) {
-                log.info("Job {} is already {} — skipping CONFIRMED transition", jobId,
+            if (!"AGREED".equals(job.getStatus())) {
+                log.info("Job {} is already {} — skipping ESCROW_HELD transition", jobId,
                         job.getStatus());
                 return;
             }
 
             Map<String, Object> extras = new HashMap<>();
-            extras.put("escrowDepositedAt", Timestamp.now());
-            extras.put("confirmedAt",       Timestamp.now());
-            jobService.transitionStatus(jobId, "CONFIRMED", "stripe", extras);
+            extras.put("escrowDepositedAt",           Timestamp.now());
+            extras.put("approvalWindowAcknowledgedAt", Timestamp.now());
+            jobService.transitionStatus(jobId, "ESCROW_HELD", "stripe", extras);
 
-            log.info("Job {} → CONFIRMED (intent {})", jobId, pi.getId());
+            log.info("Job {} → ESCROW_HELD (intent {})", jobId, pi.getId());
 
-            // Send confirmation emails + push to both parties now that payment is cleared.
-            var confirmedJob = jobService.getJob(jobId);
+            // Send confirmation emails + push to both parties now that escrow is held.
+            var escrowJob = jobService.getJob(jobId);
             notificationService.sendJobConfirmedEmail(
-                    confirmedJob.getRequesterId(), confirmedJob.getWorkerId(), confirmedJob);
-            String address = confirmedJob.getPropertyAddress() != null
-                    ? confirmedJob.getPropertyAddress().getFullText() : "the property";
+                    escrowJob.getRequesterId(), escrowJob.getWorkerId(), escrowJob);
+            String address = escrowJob.getPropertyAddress() != null
+                    ? escrowJob.getPropertyAddress().getFullText() : "the property";
             notificationService.notifyJobConfirmed(
-                    confirmedJob.getRequesterId(), confirmedJob.getWorkerId(), jobId, address);
+                    escrowJob.getRequesterId(), escrowJob.getWorkerId(), jobId, address);
 
         } catch (Exception e) {
             log.error("Failed to confirm job {}: {}", jobId, e.getMessage(), e);
@@ -264,6 +275,76 @@ public class WebhookController {
         }).get());
     }
 
+    // ── Certn background check webhook (P3-01) ────────────────────────────────
+
+    /**
+     * Certn background check result webhook.
+     *
+     * <p>Certn POSTs to this endpoint when a background check completes.
+     * The request body is a JSON document containing at minimum:
+     * <ul>
+     *   <li>{@code id}     — the applicant / order ID (matches {@code certnOrderId} stored on the Worker)</li>
+     *   <li>{@code result} — {@code "PASS"}, {@code "REVIEW"}, or {@code "FAIL"}</li>
+     * </ul>
+     *
+     * <h3>Security</h3>
+     * The raw body is verified with HMAC-SHA256 using {@code yosnowmow.certn.webhook-secret}.
+     * The expected signature is provided in the {@code X-Certn-Signature} header as a
+     * lowercase hex string.  Requests that fail verification are rejected with 400.
+     *
+     * @param payload      raw HTTP request body (injected as {@code byte[]} for HMAC verification)
+     * @param sigHeader    value of the {@code X-Certn-Signature} header
+     * @return 200 OK on success; 400 on signature failure or missing fields
+     */
+    @PostMapping("/certn")
+    public ResponseEntity<Void> handleCertnEvent(
+            @RequestBody byte[] payload,
+            @RequestHeader(value = "X-Certn-Signature", required = false) String sigHeader)
+            throws InterruptedException, ExecutionException {
+
+        // 1. Verify HMAC-SHA256 signature if a webhook secret is configured.
+        if (!certnWebhookSecret.startsWith("placeholder")) {
+            if (sigHeader == null || sigHeader.isBlank()) {
+                log.warn("Certn webhook received without X-Certn-Signature header");
+                return ResponseEntity.badRequest().build();
+            }
+            try {
+                String expectedSig = computeHmacSha256(payload, certnWebhookSecret);
+                if (!expectedSig.equalsIgnoreCase(sigHeader.trim())) {
+                    log.warn("Certn webhook signature mismatch — possible spoofing attempt");
+                    return ResponseEntity.badRequest().build();
+                }
+            } catch (Exception e) {
+                log.error("Certn webhook HMAC verification failed: {}", e.getMessage());
+                return ResponseEntity.badRequest().build();
+            }
+        }
+
+        // 2. Parse the JSON payload as a generic map.
+        String payloadStr = new String(payload, StandardCharsets.UTF_8);
+        Map<String, Object> body;
+        try {
+            body = parseMinimalJson(payloadStr);
+        } catch (Exception e) {
+            log.error("Certn webhook: could not parse JSON body: {}", e.getMessage());
+            return ResponseEntity.badRequest().build();
+        }
+
+        String certnOrderId = String.valueOf(body.getOrDefault("id", ""));
+        String certnResult  = String.valueOf(body.getOrDefault("result", ""));
+
+        if (certnOrderId.isEmpty() || certnResult.isEmpty()) {
+            log.warn("Certn webhook missing required fields 'id' or 'result': {}", payloadStr);
+            return ResponseEntity.badRequest().build();
+        }
+
+        // 3. Delegate processing to the service.
+        log.info("Certn webhook received — orderId={} result={}", certnOrderId, certnResult);
+        backgroundCheckService.handleCertnWebhook(certnOrderId, certnResult);
+
+        return ResponseEntity.ok().build();
+    }
+
     /** Extracts and deserializes a {@link PaymentIntent} from a Stripe event. */
     private Optional<PaymentIntent> extractPaymentIntent(Event event) {
         EventDataObjectDeserializer deserializer = event.getDataObjectDeserializer();
@@ -278,5 +359,33 @@ public class WebhookController {
             return Optional.empty();
         }
         return Optional.of(pi);
+    }
+
+    /**
+     * Computes HMAC-SHA256 of {@code data} using {@code secret} and returns the
+     * result as a lowercase hex string — the format Certn uses for its signature header.
+     */
+    private static String computeHmacSha256(byte[] data, String secret) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        return HexFormat.of().formatHex(mac.doFinal(data));
+    }
+
+    /**
+     * Minimal JSON parser that extracts string values from a flat JSON object.
+     * Only used for the Certn webhook payload which is a simple key-value structure.
+     * For anything more complex, Jackson's ObjectMapper should be used instead.
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parseMinimalJson(String json) {
+        // Use Jackson ObjectMapper via Spring's auto-configured bean is not injectable here;
+        // delegate to a simple regex-free parse using Jackson's default instance.
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper =
+                    new com.fasterxml.jackson.databind.ObjectMapper();
+            return mapper.readValue(json, Map.class);
+        } catch (Exception e) {
+            throw new RuntimeException("JSON parse error: " + e.getMessage(), e);
+        }
     }
 }

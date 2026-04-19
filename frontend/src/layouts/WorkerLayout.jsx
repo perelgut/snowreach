@@ -1,10 +1,17 @@
-import { Outlet, NavLink } from 'react-router-dom'
-import { useMock } from '../context/MockStateContext'
+import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import useAuth from '../hooks/useAuth'
 import logoBW from '../assets/logo-bw.png'
 
 export default function WorkerLayout() {
-  const { mockWorker } = useMock()
-  const initials = mockWorker.displayName.split(' ').map(w => w[0]).join('')
+  const { userProfile, signOut } = useAuth()
+  const navigate = useNavigate()
+  const displayName = userProfile?.name || 'User'
+  const initials = displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+
+  async function handleSignOut() {
+    await signOut()
+    navigate('/login', { replace: true })
+  }
 
   return (
     <div style={{ minHeight: '100vh', paddingBottom: 'var(--nav-h)' }}>
@@ -34,8 +41,12 @@ export default function WorkerLayout() {
         </nav>
 
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
-          <span style={{ fontSize: 13, color: 'rgba(255,255,255,.8)' }} className="hide-mobile">{mockWorker.displayName}</span>
+          <span style={{ fontSize: 13, color: 'rgba(255,255,255,.8)' }} className="hide-mobile">{displayName}</span>
           <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(255,255,255,.25)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700 }}>{initials}</div>
+          <button onClick={handleSignOut} style={{
+            background: 'none', border: '1px solid rgba(255,255,255,.4)', borderRadius: 6,
+            padding: '4px 10px', fontSize: 12, color: 'rgba(255,255,255,.8)', cursor: 'pointer',
+          }}>Sign out</button>
         </div>
       </header>
 

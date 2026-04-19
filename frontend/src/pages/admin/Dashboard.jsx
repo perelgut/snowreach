@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import StatusPill from '../../components/StatusPill'
+import Modal from '../../components/Modal'
 import * as api from '../../services/api'
 
 // ── Display helpers for the real backend Job model ────────────────────────
@@ -21,11 +22,6 @@ const TODAY = new Date().toLocaleDateString('en-CA', {
   weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
 })
 
-// Disputes and activity feed remain mock until P2-01
-const INITIAL_DISPUTES = [
-  { id: 'D-001', jobId: 'SR-2026-003', requester: 'James Park',  worker: 'Chen Wei',       opened: '2026-03-28', reason: 'Worker did not complete driveway fully',  status: 'Open' },
-  { id: 'D-002', jobId: 'SR-2026-001', requester: 'Sarah Kim',   worker: 'Alex Marchetti', opened: '2026-04-01', reason: 'Property damage claim — fence post hit',    status: 'Open' },
-]
 const ACTIVITY_FEED = [
   { time: '9 min ago',  icon: '✅', text: 'Job completed — payment pending release' },
   { time: '23 min ago', icon: '⚖️', text: 'Dispute opened' },
@@ -37,7 +33,9 @@ export default function AdminDashboard({ tab: propTab }) {
   const navigate = useNavigate()
 
   const [activeTab, setActiveTab] = useState(propTab || 'overview')
-  const [disputes,  setDisputes]  = useState(INITIAL_DISPUTES)
+  const [disputes,         setDisputes]         = useState([])
+  const [disputesLoading,  setDisputesLoading]  = useState(false)
+  const [disputesError,    setDisputesError]    = useState(null)
 
   // ── Live data state ────────────────────────────────────────────────────
   const [stats,    setStats]    = useState(null)
@@ -53,6 +51,13 @@ export default function AdminDashboard({ tab: propTab }) {
   const [jobsError,    setJobsError]    = useState(null)
   const [usersError,   setUsersError]   = useState(null)
 
+  // ── User moderation modal state (P3-06) ───────────────────────────────
+  const [moderationModal, setModerationModal] = useState(null) // { action, uid, name }
+  const [moderationReason,    setModerationReason]    = useState('')
+  const [moderationDays,      setModerationDays]      = useState(7)
+  const [moderationSubmitting, setModerationSubmitting] = useState(false)
+  const [moderationError,     setModerationError]     = useState(null)
+
   // ── Fetch stats + first page of jobs on mount ──────────────────────────
   useEffect(() => {
     setStatsLoading(true)
@@ -64,9 +69,10 @@ export default function AdminDashboard({ tab: propTab }) {
     fetchJobs(0)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch users only when the users tab is first opened
+  // Fetch users / disputes only when those tabs are first opened
   useEffect(() => {
-    if (activeTab === 'users' && users.length === 0) fetchUsers(0)
+    if (activeTab === 'users'    && users.length    === 0) fetchUsers(0)
+    if (activeTab === 'disputes' && disputes.length === 0 && !disputesLoading) fetchDisputes()
   }, [activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchJobs = useCallback((page) => {
@@ -91,8 +97,54 @@ export default function AdminDashboard({ tab: propTab }) {
       .finally(() => setUsersLoading(false))
   }, [])
 
-  function resolveDispute(id, resolution) {
-    setDisputes(ds => ds.map(d => d.id === id ? { ...d, status: resolution } : d))
+  const fetchDisputes = useCallback(() => {
+    setDisputesLoading(true)
+    api.getAdminDisputes()
+      .then(setDisputes)
+      .catch(e => setDisputesError(e.response?.data?.message || e.message))
+      .finally(() => setDisputesLoading(false))
+  }, [])
+
+  async function resolveDispute(disputeId, resolution) {
+    try {
+      await api.resolveDispute(disputeId, { resolution })
+      fetchDisputes()
+    } catch (e) {
+      alert(e.response?.data?.message || e.message || 'Failed to resolve dispute.')
+    }
+  }
+
+  function openModerationModal(action, user) {
+    setModerationModal({ action, uid: user.uid, name: user.name || user.uid?.slice(0, 8) })
+    setModerationReason('')
+    setModerationDays(7)
+    setModerationError(null)
+  }
+
+  function closeModerationModal() {
+    setModerationModal(null)
+    setModerationSubmitting(false)
+    setModerationError(null)
+  }
+
+  async function submitModerationAction() {
+    if (!moderationReason.trim()) {
+      setModerationError('A reason is required.')
+      return
+    }
+    setModerationSubmitting(true)
+    setModerationError(null)
+    try {
+      const { action, uid } = moderationModal
+      if (action === 'ban')     await api.banUser(uid, moderationReason)
+      if (action === 'unban')   await api.unbanUser(uid, moderationReason)
+      if (action === 'suspend') await api.suspendUser(uid, moderationReason, moderationDays)
+      closeModerationModal()
+      fetchUsers(userPages.page) // refresh the list
+    } catch (e) {
+      setModerationError(e.response?.data?.message || e.message || 'Action failed.')
+      setModerationSubmitting(false)
+    }
   }
 
   // ── Stat cards built from live data ───────────────────────────────────
@@ -231,18 +283,18 @@ export default function AdminDashboard({ tab: propTab }) {
                 ))}
               </div>
 
-              {/* Open Disputes — mock until P2-01 */}
+              {/* Open Disputes */}
               <div className="card">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--sp-4)' }}>
                   <h3 style={{ fontWeight: 700, fontSize: 15 }}>Open Disputes</h3>
                   <button className="btn btn-ghost btn-sm" onClick={() => setActiveTab('disputes')}>View all →</button>
                 </div>
-                {disputes.filter(d => d.status === 'Open').length === 0 ? (
+                {disputes.filter(d => d.status === 'OPEN').length === 0 ? (
                   <p style={{ fontSize: 13, color: 'var(--gray-400)' }}>No open disputes. ✓</p>
-                ) : disputes.filter(d => d.status === 'Open').map(d => (
-                  <div key={d.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--gray-100)', fontSize: 13 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 2 }}>{d.id} · {d.jobId}</div>
-                    <div style={{ color: 'var(--gray-500)', fontSize: 12 }}>{d.reason}</div>
+                ) : disputes.filter(d => d.status === 'OPEN').map(d => (
+                  <div key={d.disputeId} style={{ padding: '8px 0', borderBottom: '1px solid var(--gray-100)', fontSize: 13 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 2 }}>{d.disputeId?.slice(0, 8)} · {d.jobId?.slice(0, 8)}</div>
+                    <div style={{ color: 'var(--gray-500)', fontSize: 12 }}>{d.requesterStatement}</div>
                   </div>
                 ))}
               </div>
@@ -346,18 +398,18 @@ export default function AdminDashboard({ tab: propTab }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <thead>
                 <tr style={{ borderBottom: '2px solid var(--gray-200)' }}>
-                  {['Name', 'Roles', 'Registered', 'Status'].map(h => (
+                  {['Name', 'Roles', 'Registered', 'Status', 'Actions'].map(h => (
                     <th key={h} style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 700, color: 'var(--gray-500)', fontSize: 12, textTransform: 'uppercase', letterSpacing: .5 }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {usersLoading ? (
-                  <LoadingRow cols={4} />
+                  <LoadingRow cols={5} />
                 ) : usersError ? (
-                  <ErrorRow cols={4} message={usersError} />
+                  <ErrorRow cols={5} message={usersError} />
                 ) : users.length === 0 ? (
-                  <tr><td colSpan={4} style={{ padding: '24px', textAlign: 'center', color: 'var(--gray-400)', fontSize: 14 }}>No users found.</td></tr>
+                  <tr><td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--gray-400)', fontSize: 14 }}>No users found.</td></tr>
                 ) : users.map((u, i) => (
                   <tr key={u.uid} style={{ borderBottom: '1px solid var(--gray-100)', background: i % 2 ? 'var(--gray-50)' : '#fff' }}>
                     <td style={{ padding: '10px 12px', fontWeight: 600 }}>{u.name || u.uid?.slice(0, 8)}</td>
@@ -378,9 +430,34 @@ export default function AdminDashboard({ tab: propTab }) {
                     <td style={{ padding: '10px 12px' }}>
                       <span style={{
                         fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
-                        background: u.accountStatus === 'active' ? '#F0FDF4' : u.accountStatus === 'suspended' ? '#FEF2F2' : '#FFFBEB',
-                        color:      u.accountStatus === 'active' ? 'var(--green)' : u.accountStatus === 'suspended' ? 'var(--red)' : 'var(--amber)',
+                        background: u.accountStatus === 'active' ? '#F0FDF4' : u.accountStatus === 'banned' ? '#FEF2F2' : '#FFFBEB',
+                        color:      u.accountStatus === 'active' ? 'var(--green)' : u.accountStatus === 'banned' ? 'var(--red)' : '#92400E',
                       }}>{(u.accountStatus || 'unknown').toUpperCase()}</span>
+                    </td>
+                    <td style={{ padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {u.accountStatus === 'active' && (
+                          <>
+                            <button
+                              className="btn btn-sm"
+                              style={{ background: '#FFFBEB', color: '#92400E', border: '1px solid #FCD34D', fontSize: 12 }}
+                              onClick={() => openModerationModal('suspend', u)}
+                            >Suspend</button>
+                            <button
+                              className="btn btn-sm btn-danger"
+                              style={{ fontSize: 12 }}
+                              onClick={() => openModerationModal('ban', u)}
+                            >Ban</button>
+                          </>
+                        )}
+                        {(u.accountStatus === 'suspended' || u.accountStatus === 'banned') && (
+                          <button
+                            className="btn btn-sm"
+                            style={{ background: '#F0FDF4', color: 'var(--green)', border: '1px solid #BBF7D0', fontSize: 12 }}
+                            onClick={() => openModerationModal('unban', u)}
+                          >{u.accountStatus === 'banned' ? 'Unban' : 'Unsuspend'}</button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -399,29 +476,109 @@ export default function AdminDashboard({ tab: propTab }) {
               </div>
             </div>
           )}
+
+          {/* Moderation confirm modal */}
+          <Modal
+            isOpen={!!moderationModal}
+            onClose={closeModerationModal}
+            title={
+              moderationModal?.action === 'ban'     ? `Ban user — ${moderationModal?.name}` :
+              moderationModal?.action === 'suspend' ? `Suspend user — ${moderationModal?.name}` :
+                                                      `Reinstate user — ${moderationModal?.name}`
+            }
+            size="sm"
+            footer={
+              <div style={{ display: 'flex', gap: 'var(--sp-3)', justifyContent: 'flex-end' }}>
+                <button className="btn btn-ghost btn-sm" onClick={closeModerationModal} disabled={moderationSubmitting}>Cancel</button>
+                <button
+                  className="btn btn-sm"
+                  style={{
+                    background: moderationModal?.action === 'unban' ? 'var(--green)' :
+                                moderationModal?.action === 'ban'   ? 'var(--red)' : '#D97706',
+                    color: '#fff',
+                  }}
+                  onClick={submitModerationAction}
+                  disabled={moderationSubmitting}
+                >
+                  {moderationSubmitting ? 'Working…' :
+                   moderationModal?.action === 'ban'     ? 'Confirm Ban' :
+                   moderationModal?.action === 'suspend' ? 'Confirm Suspend' :
+                                                           'Confirm Reinstate'}
+                </button>
+              </div>
+            }
+          >
+            {moderationError && (
+              <div style={{ padding: '8px 12px', marginBottom: 12, background: '#FEF2F2', border: '1px solid var(--red)', borderRadius: 6, color: 'var(--red)', fontSize: 13 }}>
+                {moderationError}
+              </div>
+            )}
+
+            {moderationModal?.action === 'suspend' && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                  Duration (days)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={moderationDays}
+                  onChange={e => setModerationDays(Number(e.target.value))}
+                  style={{ width: '100%', padding: '8px 10px', border: '1px solid var(--gray-300)', borderRadius: 6, fontSize: 14 }}
+                />
+              </div>
+            )}
+
+            <div>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                Reason <span style={{ color: 'var(--red)' }}>*</span>
+              </label>
+              <textarea
+                rows={3}
+                value={moderationReason}
+                onChange={e => setModerationReason(e.target.value)}
+                placeholder="Required — written to the audit log and sent to the user."
+                style={{ width: '100%', padding: '8px 10px', border: '1px solid var(--gray-300)', borderRadius: 6, fontSize: 14, resize: 'vertical', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            {moderationModal?.action === 'ban' && (
+              <div style={{ marginTop: 10, padding: '8px 12px', background: '#FEF2F2', borderRadius: 6, fontSize: 12, color: 'var(--red)' }}>
+                This will cancel all open jobs for this user and revoke their account access permanently.
+              </div>
+            )}
+          </Modal>
         </>
       )}
 
-      {/* ── Disputes — mock until P2-01 ───────────────────────────────── */}
+      {/* ── Disputes ──────────────────────────────────────────────────────── */}
       {activeTab === 'disputes' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
-          <div style={{ padding: '10px 14px', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 6, fontSize: 13, color: '#92400E' }}>
-            Dispute API wires in P2-01. Showing prototype data.
-          </div>
-          {disputes.length === 0 ? (
+          {disputesLoading && <p style={{ fontSize: 13, color: 'var(--gray-400)' }}>Loading…</p>}
+          {disputesError  && (
+            <div style={{ padding: '12px', background: '#FEF2F2', border: '1px solid var(--red)', borderRadius: 6, color: 'var(--red)', fontSize: 13 }}>
+              {disputesError}
+            </div>
+          )}
+          {!disputesLoading && !disputesError && disputes.length === 0 && (
             <div className="card" style={{ textAlign: 'center', padding: 'var(--sp-10)', color: 'var(--gray-400)' }}>
               <div style={{ fontSize: 40, marginBottom: 12 }}>⚖️</div>
               <p>No disputes. All good!</p>
             </div>
-          ) : disputes.map(d => {
-            const resolved = d.status !== 'Open'
+          )}
+          {disputes.map(d => {
+            const resolved = d.status !== 'OPEN'
+            const openedDate = d.openedAt
+              ? new Date((d.openedAt.seconds ?? d.openedAt._seconds ?? 0) * 1000).toLocaleDateString('en-CA')
+              : 'N/A'
             return (
-              <div key={d.id} className="card" style={{ borderLeft: `4px solid ${resolved ? 'var(--gray-300)' : 'var(--red)'}`, opacity: resolved ? .7 : 1 }}>
+              <div key={d.disputeId} className="card" style={{ borderLeft: `4px solid ${resolved ? 'var(--gray-300)' : 'var(--red)'}`, opacity: resolved ? .7 : 1 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                   <div>
-                    <div style={{ fontWeight: 800, fontSize: 15 }}>{d.id}</div>
+                    <div style={{ fontWeight: 800, fontSize: 15, fontFamily: 'monospace' }}>{d.disputeId?.slice(0, 12)}…</div>
                     <div style={{ fontSize: 13, color: 'var(--gray-500)', marginTop: 2 }}>
-                      Job: <span onClick={() => navigate(`/admin/jobs/${d.jobId}`)} style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'underline' }}>{d.jobId}</span>
+                      Job: <span onClick={() => navigate(`/admin/jobs/${d.jobId}`)} style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'underline' }}>{d.jobId?.slice(0, 8)}…</span>
                     </div>
                   </div>
                   <span style={{ fontSize: 12, fontWeight: 700, padding: '2px 10px', borderRadius: 4, background: resolved ? 'var(--gray-100)' : '#FEF2F2', color: resolved ? 'var(--gray-400)' : 'var(--red)' }}>
@@ -429,21 +586,26 @@ export default function AdminDashboard({ tab: propTab }) {
                   </span>
                 </div>
                 <div style={{ fontSize: 14, display: 'flex', flexWrap: 'wrap', gap: 'var(--sp-4)', color: 'var(--gray-600)', marginBottom: 10 }}>
-                  <span><strong>Requester:</strong> {d.requester}</span>
-                  <span><strong>Worker:</strong> {d.worker}</span>
-                  <span><strong>Opened:</strong> {d.opened}</span>
+                  <span><strong>Opened by:</strong> {d.openedByUid?.slice(0, 8)}…</span>
+                  <span><strong>Opened:</strong> {openedDate}</span>
+                  {d.resolution && <span><strong>Resolution:</strong> {d.resolution}</span>}
                 </div>
-                <div style={{ fontSize: 13, color: 'var(--gray-600)', marginBottom: 14 }}>
-                  <strong>Reason:</strong> {d.reason}
+                <div style={{ fontSize: 13, color: 'var(--gray-600)', marginBottom: d.workerStatement ? 8 : 14 }}>
+                  <strong>Requester statement:</strong> {d.requesterStatement}
                 </div>
+                {d.workerStatement && (
+                  <div style={{ fontSize: 13, color: 'var(--gray-600)', marginBottom: 14 }}>
+                    <strong>Worker response:</strong> {d.workerStatement}
+                  </div>
+                )}
                 {!resolved && (
                   <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
-                    <button className="btn btn-sm" style={{ background: 'var(--green)', color: '#fff' }} onClick={() => resolveDispute(d.id, 'Resolved — Released')}>✓ Release Payment</button>
-                    <button className="btn btn-sm btn-danger" onClick={() => resolveDispute(d.id, 'Resolved — Refunded')}>↩ Issue Refund</button>
+                    <button className="btn btn-sm" style={{ background: 'var(--green)', color: '#fff' }} onClick={() => resolveDispute(d.disputeId, 'RELEASED')}>✓ Release Payment</button>
+                    <button className="btn btn-sm btn-danger" onClick={() => resolveDispute(d.disputeId, 'REFUNDED')}>↩ Issue Refund</button>
                     <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/admin/jobs/${d.jobId}`)}>Review Job Detail →</button>
                   </div>
                 )}
-                {resolved && <div style={{ fontSize: 12, color: 'var(--gray-400)', fontStyle: 'italic' }}>{d.status}</div>}
+                {resolved && <div style={{ fontSize: 12, color: 'var(--gray-400)', fontStyle: 'italic' }}>Resolved: {d.resolution} — {d.adminNotes || 'no notes'}</div>}
               </div>
             )
           })}

@@ -3,7 +3,6 @@ import useAuth          from './hooks/useAuth'
 import RequesterLayout from './layouts/RequesterLayout'
 import WorkerLayout from './layouts/WorkerLayout'
 import AdminLayout from './layouts/AdminLayout'
-import DevRoleSwitcher from './components/DevRoleSwitcher'
 
 import RequesterHome from './pages/requester/Home'
 import PostJob from './pages/requester/PostJob'
@@ -81,7 +80,6 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/requester" replace />} />
       </Routes>
-      <DevRoleSwitcher />
     </>
   )
 }

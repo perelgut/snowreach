@@ -32,8 +32,8 @@ public class Job {
 
     /**
      * Job lifecycle state.
-     * Valid values: REQUESTED, PENDING_DEPOSIT, CONFIRMED, IN_PROGRESS,
-     *               COMPLETE, INCOMPLETE, DISPUTED, RELEASED, REFUNDED,
+     * Valid values: POSTED, NEGOTIATING, AGREED, ESCROW_HELD, IN_PROGRESS,
+     *               PENDING_APPROVAL, INCOMPLETE, DISPUTED, RELEASED, REFUNDED,
      *               SETTLED, CANCELLED
      */
     private String status;
@@ -85,9 +85,43 @@ public class Job {
      */
     private boolean personalWorkerOnly;
 
-    // ── Pricing (set when Worker accepts; locked at CONFIRMED) ────────────────
+    // ── Negotiated Marketplace (v1.1) ─────────────────────────────────────────
 
-    /** Worker's applicable tier price in CAD; null until Worker accepts. */
+    /**
+     * Price (in cents) proposed by the Requester when posting the job.
+     * YSM recommends a price; the Requester may change it.
+     */
+    private Integer postedPriceCents;
+
+    /**
+     * Price (in cents) agreed by both parties after negotiation.
+     * Set when OfferService records a mutual acceptance.
+     */
+    private Integer agreedPriceCents;
+
+    /** UID of the Worker who agreed to the final negotiated price. */
+    private String agreedWorkerId;
+
+    /** Workers the Requester has rejected from this job (job-by-job blocking). */
+    private List<String> rejectedWorkerIds;
+
+    /**
+     * Hours the Requester has to approve or dispute after the Worker posts completion.
+     * Default is 2; set when the Requester deposits escrow and acknowledges the window.
+     */
+    private int approvalWindowHours;
+
+    /** When the Requester explicitly acknowledged the approval window at escrow deposit time. */
+    private Timestamp approvalWindowAcknowledgedAt;
+
+    private Timestamp postedAt;
+    private Timestamp agreedAt;
+    private Timestamp pendingApprovalAt;
+    private Timestamp approvedAt;
+
+    // ── Pricing (set when Requester deposits escrow; locked at ESCROW_HELD) ──
+
+    /** Worker's applicable tier price in CAD; null until escrow deposited. */
     private Double tierPriceCAD;
 
     /** Ontario HST (13%); 0 if Worker is not HST-registered. */
@@ -115,6 +149,12 @@ public class Job {
     /** Stripe Transfer ID created when the Worker is paid out at RELEASED state. */
     private String stripeTransferId;
 
+    /**
+     * Stripe Refund ID created on a SPLIT or REFUNDED dispute resolution.
+     * Null for full-release outcomes.
+     */
+    private String stripeRefundId;
+
     private Timestamp escrowDepositedAt;
 
     /** 30 minutes after Worker acceptance — deposit must arrive by this time. */
@@ -122,11 +162,24 @@ public class Job {
 
     // ── Lifecycle timestamps ──────────────────────────────────────────────────
 
+    /** @deprecated Replaced by postedAt in v1.1. Retained for Firestore read compatibility. */
+    @Deprecated
     private Timestamp requestedAt;
+
+    /** @deprecated Sequential dispatch retired in v1.1. Retained for Firestore read compatibility. */
+    @Deprecated
     private Timestamp offeredAt;
+
+    /** @deprecated Replaced by agreedAt in v1.1. Retained for Firestore read compatibility. */
+    @Deprecated
     private Timestamp acceptedAt;
+
     private Timestamp depositReceivedAt;
+
+    /** @deprecated Replaced by escrowDepositedAt in v1.1. Retained for Firestore read compatibility. */
+    @Deprecated
     private Timestamp confirmedAt;
+
     private Timestamp inProgressAt;
     private Timestamp completedAt;
 
@@ -163,6 +216,10 @@ public class Job {
     // ── Dispute ───────────────────────────────────────────────────────────────
 
     private Timestamp disputeInitiatedAt;
+
+    /** Firestore ID of the Dispute document, set when a dispute is opened. */
+    private String disputeId;
+
     private String disputeReason;
     private String disputeDescription;
 
@@ -206,6 +263,13 @@ public class Job {
 
     /** Should be 0 or 1 — irreversible after Cannot Complete is submitted. */
     private int cannotCompleteCountThisJob;
+
+    /**
+     * Set to {@code true} by {@link com.yosnowmow.service.FraudDetectionService}
+     * when one or more fraud rules trigger before payout release.
+     * Cleared to {@code false} when an Admin approves the associated fraud flag.
+     */
+    private boolean payoutPaused;
 
     // ── Timestamps ────────────────────────────────────────────────────────────
 
@@ -261,6 +325,36 @@ public class Job {
     public boolean isPersonalWorkerOnly() { return personalWorkerOnly; }
     public void setPersonalWorkerOnly(boolean personalWorkerOnly) { this.personalWorkerOnly = personalWorkerOnly; }
 
+    public Integer getPostedPriceCents() { return postedPriceCents; }
+    public void setPostedPriceCents(Integer postedPriceCents) { this.postedPriceCents = postedPriceCents; }
+
+    public Integer getAgreedPriceCents() { return agreedPriceCents; }
+    public void setAgreedPriceCents(Integer agreedPriceCents) { this.agreedPriceCents = agreedPriceCents; }
+
+    public String getAgreedWorkerId() { return agreedWorkerId; }
+    public void setAgreedWorkerId(String agreedWorkerId) { this.agreedWorkerId = agreedWorkerId; }
+
+    public List<String> getRejectedWorkerIds() { return rejectedWorkerIds; }
+    public void setRejectedWorkerIds(List<String> rejectedWorkerIds) { this.rejectedWorkerIds = rejectedWorkerIds; }
+
+    public int getApprovalWindowHours() { return approvalWindowHours; }
+    public void setApprovalWindowHours(int approvalWindowHours) { this.approvalWindowHours = approvalWindowHours; }
+
+    public Timestamp getApprovalWindowAcknowledgedAt() { return approvalWindowAcknowledgedAt; }
+    public void setApprovalWindowAcknowledgedAt(Timestamp t) { this.approvalWindowAcknowledgedAt = t; }
+
+    public Timestamp getPostedAt() { return postedAt; }
+    public void setPostedAt(Timestamp postedAt) { this.postedAt = postedAt; }
+
+    public Timestamp getAgreedAt() { return agreedAt; }
+    public void setAgreedAt(Timestamp agreedAt) { this.agreedAt = agreedAt; }
+
+    public Timestamp getPendingApprovalAt() { return pendingApprovalAt; }
+    public void setPendingApprovalAt(Timestamp pendingApprovalAt) { this.pendingApprovalAt = pendingApprovalAt; }
+
+    public Timestamp getApprovedAt() { return approvedAt; }
+    public void setApprovedAt(Timestamp approvedAt) { this.approvedAt = approvedAt; }
+
     public Double getTierPriceCAD() { return tierPriceCAD; }
     public void setTierPriceCAD(Double tierPriceCAD) { this.tierPriceCAD = tierPriceCAD; }
 
@@ -284,6 +378,9 @@ public class Job {
 
     public String getStripeTransferId() { return stripeTransferId; }
     public void setStripeTransferId(String stripeTransferId) { this.stripeTransferId = stripeTransferId; }
+
+    public String getStripeRefundId() { return stripeRefundId; }
+    public void setStripeRefundId(String stripeRefundId) { this.stripeRefundId = stripeRefundId; }
 
     public Timestamp getEscrowDepositedAt() { return escrowDepositedAt; }
     public void setEscrowDepositedAt(Timestamp escrowDepositedAt) { this.escrowDepositedAt = escrowDepositedAt; }
@@ -345,6 +442,9 @@ public class Job {
     public Timestamp getDisputeInitiatedAt() { return disputeInitiatedAt; }
     public void setDisputeInitiatedAt(Timestamp disputeInitiatedAt) { this.disputeInitiatedAt = disputeInitiatedAt; }
 
+    public String getDisputeId() { return disputeId; }
+    public void setDisputeId(String disputeId) { this.disputeId = disputeId; }
+
     public String getDisputeReason() { return disputeReason; }
     public void setDisputeReason(String disputeReason) { this.disputeReason = disputeReason; }
 
@@ -380,6 +480,9 @@ public class Job {
 
     public List<String> getSelectedWorkerIds() { return selectedWorkerIds; }
     public void setSelectedWorkerIds(List<String> selectedWorkerIds) { this.selectedWorkerIds = selectedWorkerIds; }
+
+    public boolean isPayoutPaused() { return payoutPaused; }
+    public void setPayoutPaused(boolean payoutPaused) { this.payoutPaused = payoutPaused; }
 
     public Timestamp getCreatedAt() { return createdAt; }
     public void setCreatedAt(Timestamp createdAt) { this.createdAt = createdAt; }

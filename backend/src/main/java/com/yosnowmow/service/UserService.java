@@ -18,8 +18,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.Period;
+import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,13 +61,16 @@ public class UserService {
     private final Firestore firestore;
     private final FirebaseAuth firebaseAuth;
     private final NotificationService notificationService;
+    private final AuditLogService auditLogService;
 
     public UserService(Firestore firestore,
                        FirebaseAuth firebaseAuth,
-                       NotificationService notificationService) {
+                       NotificationService notificationService,
+                       AuditLogService auditLogService) {
         this.firestore = firestore;
         this.firebaseAuth = firebaseAuth;
         this.notificationService = notificationService;
+        this.auditLogService = auditLogService;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -230,6 +236,152 @@ public class UserService {
         }
     }
 
+    // ── Admin user moderation (P3-06) ─────────────────────────────────────────
+
+    /**
+     * Permanently bans a user account.
+     *
+     * Steps (token/claims):
+     * <ol>
+     *   <li>Set {@code accountStatus = "banned"}, {@code bannedReason}, {@code bannedAt}.</li>
+     *   <li>Revoke Firebase refresh tokens so all existing sessions become invalid immediately.</li>
+     *   <li>Clear Firebase custom claims (roles = []) so re-issued tokens carry no roles.</li>
+     *   <li>Send ban notification email.</li>
+     *   <li>Audit log the action.</li>
+     * </ol>
+     *
+     * Cancelling the user's open jobs must be handled by the caller (AdminController)
+     * before invoking this method to avoid circular dependency with JobService.
+     *
+     * @param uid      Firebase Auth UID of the target user
+     * @param adminUid Firebase Auth UID of the admin performing the action
+     * @param reason   human-readable reason, written to audit log
+     */
+    public void banUser(String uid, String adminUid, String reason) {
+        User user = getUser(uid);
+
+        if ("banned".equals(user.getAccountStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "User is already banned.");
+        }
+
+        Timestamp now = Timestamp.now();
+        Map<String, Object> updates = new HashMap<>();
+        updates.put("accountStatus", "banned");
+        updates.put("bannedReason",  reason);
+        updates.put("bannedAt",      now);
+        updates.put("updatedAt",     now);
+        writeUpdates(uid, updates);
+
+        revokeTokensAndClearClaims(uid);
+
+        notificationService.sendAccountBannedEmail(uid, user.getName(), reason);
+
+        auditLogService.write(adminUid, "USER_BANNED", "user", uid,
+                Map.of("accountStatus", user.getAccountStatus()),
+                Map.of("accountStatus", "banned", "reason", reason));
+
+        log.info("User banned: uid={} by admin={}", uid, adminUid);
+    }
+
+    /**
+     * Suspends a user account for a fixed number of days.
+     *
+     * <p>Steps:
+     * <ol>
+     *   <li>Set {@code accountStatus = "suspended"}, {@code suspendedReason},
+     *       {@code suspendedAt}, and {@code suspendedUntil}.</li>
+     *   <li>Revoke Firebase refresh tokens.</li>
+     *   <li>Send suspension notification email.</li>
+     *   <li>Audit log the action.</li>
+     * </ol>
+     *
+     * <p>Scheduling the auto-unsuspend Quartz timer is the caller's responsibility
+     * (handled in AdminController to keep this service free of Quartz imports).
+     *
+     * @param uid          Firebase Auth UID of the target user
+     * @param adminUid     Firebase Auth UID of the admin performing the action
+     * @param reason       human-readable reason, written to audit log
+     * @param suspendedUntil the exact date/time the suspension expires
+     */
+    public void suspendUser(String uid, String adminUid, String reason, Date suspendedUntil) {
+        User user = getUser(uid);
+
+        if ("banned".equals(user.getAccountStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Cannot suspend a banned user. Unban first.");
+        }
+        if ("suspended".equals(user.getAccountStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "User is already suspended.");
+        }
+
+        Timestamp now = Timestamp.now();
+        Map<String, Object> updates = new HashMap<>();
+        updates.put("accountStatus",  "suspended");
+        updates.put("suspendedReason", reason);
+        updates.put("suspendedAt",    now);
+        updates.put("suspendedUntil", suspendedUntil);
+        updates.put("updatedAt",      now);
+        writeUpdates(uid, updates);
+
+        revokeTokens(uid);
+
+        notificationService.sendAccountSuspendedEmail(uid, user.getName(), reason, suspendedUntil);
+
+        auditLogService.write(adminUid, "USER_SUSPENDED", "user", uid,
+                Map.of("accountStatus", user.getAccountStatus()),
+                Map.of("accountStatus", "suspended", "reason", reason,
+                       "suspendedUntil", suspendedUntil.toString()));
+
+        log.info("User suspended: uid={} until={} by admin={}", uid, suspendedUntil, adminUid);
+    }
+
+    /**
+     * Lifts a ban or suspension from a user account, restoring it to active.
+     *
+     * <p>Steps:
+     * <ol>
+     *   <li>Set {@code accountStatus = "active"}, clear suspension/ban fields.</li>
+     *   <li>Restore Firebase custom claims from the {@code roles} array in Firestore.</li>
+     *   <li>Audit log the action.</li>
+     * </ol>
+     *
+     * <p>Also used by {@link com.yosnowmow.scheduler.AutoUnsuspendJob} (caller uid = "SYSTEM").
+     *
+     * @param uid      Firebase Auth UID of the target user
+     * @param adminUid Firebase Auth UID of the actor (use "SYSTEM" for auto-unsuspend)
+     * @param reason   human-readable reason, written to audit log
+     */
+    public void unbanUser(String uid, String adminUid, String reason) {
+        User user = getUser(uid);
+
+        if ("active".equals(user.getAccountStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "User account is already active.");
+        }
+
+        String previousStatus = user.getAccountStatus();
+
+        Timestamp now = Timestamp.now();
+        Map<String, Object> updates = new HashMap<>();
+        updates.put("accountStatus",   "active");
+        updates.put("suspendedReason", null);
+        updates.put("suspendedAt",     null);
+        updates.put("suspendedUntil",  null);
+        updates.put("bannedReason",    null);
+        updates.put("bannedAt",        null);
+        updates.put("updatedAt",       now);
+        writeUpdates(uid, updates);
+
+        // Restore roles-based custom claims from Firestore.
+        setCustomClaims(uid, user.getRoles() != null ? user.getRoles() : Collections.emptyList());
+
+        auditLogService.write(adminUid, "USER_UNBANNED", "user", uid,
+                Map.of("accountStatus", previousStatus),
+                Map.of("accountStatus", "active", "reason", reason));
+
+        log.info("User unbanned/unsuspended: uid={} previousStatus={} by actor={}",
+                uid, previousStatus, adminUid);
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /**
@@ -312,6 +464,42 @@ public class UserService {
             // (empty roles) so the user can still authenticate; roles will appear on
             // the next token refresh.
             log.error("Failed to set custom claims for uid {}: {}", uid, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Revokes Firebase refresh tokens for the given uid, invalidating all current sessions.
+     * Non-fatal on failure.
+     */
+    private void revokeTokens(String uid) {
+        try {
+            firebaseAuth.revokeRefreshTokens(uid);
+            log.debug("Firebase refresh tokens revoked for uid={}", uid);
+        } catch (FirebaseAuthException e) {
+            log.error("Failed to revoke refresh tokens for uid {}: {}", uid, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Revokes tokens AND clears custom claims (roles=[]) so that re-issued tokens
+     * carry no role information.  Used on ban.
+     */
+    private void revokeTokensAndClearClaims(String uid) {
+        revokeTokens(uid);
+        setCustomClaims(uid, Collections.emptyList());
+    }
+
+    /**
+     * Writes a field-level update map to the user document.
+     */
+    private void writeUpdates(String uid, Map<String, Object> updates) {
+        try {
+            firestore.collection(USERS_COLLECTION).document(uid).update(updates).get();
+        } catch (InterruptedException | ExecutionException e) {
+            Thread.currentThread().interrupt();
+            log.error("Firestore error updating user {}: {}", uid, e.getMessage(), e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to update user");
         }
     }
 }

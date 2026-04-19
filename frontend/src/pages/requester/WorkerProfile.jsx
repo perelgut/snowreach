@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Modal from '../../components/Modal'
 
@@ -35,7 +36,40 @@ function Stars({ rating, size = 16 }) {
   )
 }
 
+// ─── Badge definitions ─────────────────────────────────────────────────────────
+
+const BADGE_META = {
+  VERIFIED:    { icon: '✓', label: 'Background Checked', tooltip: 'Criminal background check passed', color: '#1A6FDB', bg: '#EBF3FF' },
+  INSURED:     { icon: '🛡', label: 'Insured',            tooltip: 'Liability insurance on file',      color: '#27AE60', bg: '#EAFAF1' },
+  TOP_RATED:   { icon: '★', label: 'Top Rated',           tooltip: '4.8+ rating with 25+ jobs',        color: '#D4A017', bg: '#FEF9E7' },
+  EXPERIENCED: { icon: '◆', label: 'Experienced',         tooltip: '100+ jobs completed',               color: '#8E44AD', bg: '#F5EEF8' },
+}
+
+// ─── Trust badge chip ──────────────────────────────────────────────────────────
+
+function TrustBadge({ badgeId }) {
+  const meta = BADGE_META[badgeId]
+  if (!meta) return null
+  return (
+    <span
+      title={meta.tooltip}
+      style={{
+        fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
+        background: meta.bg, color: meta.color,
+        border: `1px solid ${meta.color}`,
+        cursor: 'default',
+      }}
+    >
+      {meta.icon} {meta.label}
+    </span>
+  )
+}
+
 // ─── Shared profile content ────────────────────────────────────────────────────
+
+// In the live app, activeBadges would be fetched from GET /api/users/{uid}/worker/badges.
+// For the prototype we derive them from the mock worker's known attributes.
+const MOCK_ACTIVE_BADGES = ['VERIFIED']  // Alex has background check; insurance pending in prototype
 
 function WorkerProfileContent() {
   return (
@@ -64,19 +98,12 @@ function WorkerProfileContent() {
           </div>
         </div>
 
-        {/* Trust badges */}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {['✓ Background Checked', '🛡 Insured (Phase 3)'].map(badge => (
-            <span key={badge} style={{
-              fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
-              background: badge.includes('Phase 3') ? 'var(--gray-100)' : 'var(--green-bg)',
-              color: badge.includes('Phase 3') ? 'var(--gray-400)' : 'var(--green)',
-              border: `1px solid ${badge.includes('Phase 3') ? 'var(--gray-200)' : 'var(--green)'}`,
-            }}>
-              {badge}
-            </span>
-          ))}
-        </div>
+        {/* Trust badges — each chip shows icon + label + tooltip */}
+        {MOCK_ACTIVE_BADGES.length > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {MOCK_ACTIVE_BADGES.map(id => <TrustBadge key={id} badgeId={id} />)}
+          </div>
+        )}
       </div>
 
       {/* Stats bar */}

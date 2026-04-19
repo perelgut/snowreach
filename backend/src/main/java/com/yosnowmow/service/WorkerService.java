@@ -54,13 +54,16 @@ public class WorkerService {
     private final FirebaseAuth firebaseAuth;
     private final UserService userService;
     private final GeocodingService geocodingService;
+    private final AuditLogService auditLogService;
 
     public WorkerService(Firestore firestore, FirebaseAuth firebaseAuth,
-                         UserService userService, GeocodingService geocodingService) {
+                         UserService userService, GeocodingService geocodingService,
+                         AuditLogService auditLogService) {
         this.firestore = firestore;
         this.firebaseAuth = firebaseAuth;
         this.userService = userService;
         this.geocodingService = geocodingService;
+        this.auditLogService = auditLogService;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -198,6 +201,78 @@ public class WorkerService {
         writeUpdates(uid, updates);
         log.info("Worker profile updated: uid={} fields={}", uid, updates.keySet());
         return userService.getUser(uid);
+    }
+
+    /**
+     * Updates the maximum concurrent job capacity for a Worker (P2-05).
+     *
+     * <p>Access rules:
+     * <ul>
+     *   <li>A Worker may only update their own capacity ({@code callerUid == targetUid}).</li>
+     *   <li>Admins may update any Worker's capacity ({@code isAdmin == true}).</li>
+     * </ul>
+     *
+     * <p>Qualification gate for {@code maxConcurrentJobs > 1}:
+     * <ul>
+     *   <li>Worker must have an average rating of at least 4.0 (non-null).</li>
+     *   <li>Worker must have completed at least 10 jobs.</li>
+     * </ul>
+     *
+     * @param targetUid         Firebase Auth UID of the Worker to update
+     * @param callerUid         Firebase Auth UID of the caller
+     * @param isAdmin           true if the caller holds the admin role
+     * @param maxConcurrentJobs new capacity value (1–3, validated by controller DTO)
+     * @return the full updated User document
+     */
+    public User updateCapacity(String targetUid, String callerUid,
+                               boolean isAdmin, int maxConcurrentJobs) {
+
+        // Access control: caller must be the Worker themselves, or an admin.
+        if (!isAdmin && !callerUid.equals(targetUid)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Workers may only update their own concurrent job capacity.");
+        }
+
+        User user = userService.getUser(targetUid);
+        if (user.getWorker() == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "No Worker profile found for uid " + targetUid);
+        }
+
+        WorkerProfile worker = user.getWorker();
+
+        // Enforce qualification requirements for concurrent capacity > 1.
+        if (maxConcurrentJobs > 1) {
+            Double rating = worker.getRating();
+            int completedJobs = worker.getCompletedJobCount();
+
+            if (rating == null || rating < 4.0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "A minimum average rating of 4.0 is required to set maxConcurrentJobs > 1. "
+                        + "Current rating: " + (rating == null
+                                ? "not yet rated (fewer than 10 completed jobs)"
+                                : String.format("%.2f", rating)));
+            }
+            if (completedJobs < 10) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "At least 10 completed jobs are required to set maxConcurrentJobs > 1. "
+                        + "Completed jobs: " + completedJobs);
+            }
+        }
+
+        // Audit before writing (before-state = current capacityMax).
+        auditLogService.write(callerUid, "WORKER_CAPACITY_UPDATED", "user", targetUid,
+                Map.of("capacityMax", worker.getCapacityMax()),
+                Map.of("capacityMax", maxConcurrentJobs));
+
+        Map<String, Object> updates = new HashMap<>();
+        updates.put("worker.capacityMax", maxConcurrentJobs);
+        updates.put("updatedAt", Timestamp.now());
+        writeUpdates(targetUid, updates);
+
+        log.info("Worker capacity updated: uid={} maxConcurrentJobs={} updatedBy={}",
+                targetUid, maxConcurrentJobs, callerUid);
+        return userService.getUser(targetUid);
     }
 
     // ── Package-private helpers (used by other services) ─────────────────────

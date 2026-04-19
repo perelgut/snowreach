@@ -115,25 +115,26 @@ const TEST_USERS = [
         designation:          'personal',
 
         baseAddress: {
-          streetNumber: '123',
-          street:       'Maple Ave',
-          city:         'Oakville',
+          streetNumber: '600',
+          street:       'The East Mall',
+          city:         'Etobicoke',
           province:     'ON',
-          postalCode:   'L6J 2V3',
-          fullText:     '123 Maple Ave, Oakville, ON L6J 2V3',
+          postalCode:   'M9B 4B1',
+          fullText:     '600 The East Mall, Etobicoke, ON M9B 4B1',
         },
 
-        // Geocoded coordinates for the base address above
-        baseCoords:              new admin.firestore.GeoPoint(43.4675, -79.6877),
+        // Geocoded coordinates for Etobicoke (covers all of Toronto for demo)
+        baseCoords:              new admin.firestore.GeoPoint(43.6500, -79.5500),
         addressGeocodeMethod:    'google_maps',
 
-        serviceRadiusKm:         10,
+        serviceRadiusKm:         30,
         bufferOptIn:             true,
 
         // Distance-based pricing tiers
         tiers: [
-          { maxDistanceKm: 5,  pricePerJobCents: 4500 },
-          { maxDistanceKm: 10, pricePerJobCents: 6000 },
+          { maxDistanceKm: 10, pricePerJobCents: 4500 },
+          { maxDistanceKm: 20, pricePerJobCents: 5500 },
+          { maxDistanceKm: 30, pricePerJobCents: 6500 },
         ],
 
         hstRegistered:           false,
@@ -379,11 +380,12 @@ const TEST_USERS = [
         baseCoords:              new admin.firestore.GeoPoint(43.7685, -79.4101),
         addressGeocodeMethod:    'google_maps',
 
-        serviceRadiusKm:         6,
+        serviceRadiusKm:         25,
         bufferOptIn:             false,
 
         tiers: [
-          { maxDistanceKm: 6,  pricePerJobCents: 5500 },
+          { maxDistanceKm: 10, pricePerJobCents: 5000 },
+          { maxDistanceKm: 25, pricePerJobCents: 6500 },
         ],
 
         hstRegistered:           false,

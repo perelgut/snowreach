@@ -2,6 +2,7 @@ package com.yosnowmow.model;
 
 import com.google.cloud.Timestamp;
 
+import java.util.Date;
 import java.util.List;
 
 /**
@@ -58,6 +59,18 @@ public class User {
     private String accountStatus;
 
     private String suspendedReason;
+
+    /** Populated when the account is suspended; cleared on unsuspend. */
+    private Timestamp suspendedAt;
+
+    /** The date/time the suspension expires; set by the admin at suspend time. */
+    private Date suspendedUntil;
+
+    /** Populated when the account is banned; empty string to clear. */
+    private String bannedReason;
+
+    /** Timestamp of the most recent ban action. */
+    private Timestamp bannedAt;
 
     // ── Contact ──────────────────────────────────────────────────────────────
 
@@ -136,6 +149,18 @@ public class User {
 
     public String getSuspendedReason() { return suspendedReason; }
     public void setSuspendedReason(String suspendedReason) { this.suspendedReason = suspendedReason; }
+
+    public Timestamp getSuspendedAt() { return suspendedAt; }
+    public void setSuspendedAt(Timestamp suspendedAt) { this.suspendedAt = suspendedAt; }
+
+    public Date getSuspendedUntil() { return suspendedUntil; }
+    public void setSuspendedUntil(Date suspendedUntil) { this.suspendedUntil = suspendedUntil; }
+
+    public String getBannedReason() { return bannedReason; }
+    public void setBannedReason(String bannedReason) { this.bannedReason = bannedReason; }
+
+    public Timestamp getBannedAt() { return bannedAt; }
+    public void setBannedAt(Timestamp bannedAt) { this.bannedAt = bannedAt; }
 
     public String getPhoneNumber() { return phoneNumber; }
     public void setPhoneNumber(String phoneNumber) { this.phoneNumber = phoneNumber; }

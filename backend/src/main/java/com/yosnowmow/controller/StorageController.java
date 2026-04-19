@@ -93,9 +93,9 @@ public class StorageController {
         }
 
         String status = job.getStatus();
-        if (!"IN_PROGRESS".equals(status) && !"COMPLETE".equals(status)) {
+        if (!"IN_PROGRESS".equals(status) && !"PENDING_APPROVAL".equals(status)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Photos may only be uploaded while the job is IN_PROGRESS or COMPLETE");
+                    "Photos may only be uploaded while the job is IN_PROGRESS or PENDING_APPROVAL");
         }
 
         // Guard: max photos.

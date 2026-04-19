@@ -5,6 +5,9 @@ import com.yosnowmow.config.SecurityConfig;
 import com.yosnowmow.model.User;
 import com.yosnowmow.security.AuthenticatedUser;
 import com.yosnowmow.security.RbacInterceptor;
+import com.yosnowmow.service.BackgroundCheckService;
+import com.yosnowmow.service.BadgeService;
+import com.yosnowmow.service.InsuranceService;
 import com.yosnowmow.service.WorkerService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,6 +28,8 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -69,8 +74,11 @@ class WorkerControllerTest {
     @Autowired
     private MockMvc mockMvc;
 
-    @MockBean private WorkerService workerService;
-    @MockBean private FirebaseAuth  firebaseAuth;
+    @MockBean private WorkerService          workerService;
+    @MockBean private BackgroundCheckService backgroundCheckService;
+    @MockBean private InsuranceService       insuranceService;
+    @MockBean private BadgeService           badgeService;
+    @MockBean private FirebaseAuth           firebaseAuth;
 
     // ── POST /api/users/me/worker ──────────────────────────────────────────────
 
@@ -157,6 +165,72 @@ class WorkerControllerTest {
                .andExpect(status().isForbidden());
 
         verify(workerService, never()).updateWorkerProfile(any(), any());
+    }
+
+    // ── PATCH /api/users/{uid}/worker/capacity (P2-05) ────────────────────────
+
+    @Test
+    @DisplayName("PATCH /{uid}/worker/capacity: Worker updating own capacity → 200")
+    void updateCapacity_ownUid_returns200() throws Exception {
+        User updated = makeUser(UID_A);
+        when(workerService.updateCapacity(eq(UID_A), eq(UID_A), eq(false), eq(1))).thenReturn(updated);
+
+        mockMvc.perform(patch(BASE + "/" + UID_A + "/worker/capacity")
+                    .with(asUser(UID_A, "worker"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                            {"maxConcurrentJobs": 1}
+                            """))
+               .andExpect(status().isOk())
+               .andExpect(jsonPath("$.uid").value(UID_A));
+
+        verify(workerService).updateCapacity(eq(UID_A), eq(UID_A), eq(false), eq(1));
+    }
+
+    @Test
+    @DisplayName("PATCH /{uid}/worker/capacity: Admin updating another worker's capacity → 200")
+    void updateCapacity_asAdmin_returns200() throws Exception {
+        User updated = makeUser(UID_B);
+        when(workerService.updateCapacity(eq(UID_B), eq(ADM_UID), eq(true), eq(2))).thenReturn(updated);
+
+        mockMvc.perform(patch(BASE + "/" + UID_B + "/worker/capacity")
+                    .with(asUser(ADM_UID, "admin"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                            {"maxConcurrentJobs": 2}
+                            """))
+               .andExpect(status().isOk())
+               .andExpect(jsonPath("$.uid").value(UID_B));
+
+        verify(workerService).updateCapacity(eq(UID_B), eq(ADM_UID), eq(true), eq(2));
+    }
+
+    @Test
+    @DisplayName("PATCH /{uid}/worker/capacity: maxConcurrentJobs=0 (below min) → 400")
+    void updateCapacity_belowMin_returns400() throws Exception {
+        mockMvc.perform(patch(BASE + "/" + UID_A + "/worker/capacity")
+                    .with(asUser(UID_A, "worker"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                            {"maxConcurrentJobs": 0}
+                            """))
+               .andExpect(status().isBadRequest());
+
+        verify(workerService, never()).updateCapacity(any(), any(), anyBoolean(), anyInt());
+    }
+
+    @Test
+    @DisplayName("PATCH /{uid}/worker/capacity: maxConcurrentJobs=4 (above max) → 400")
+    void updateCapacity_aboveMax_returns400() throws Exception {
+        mockMvc.perform(patch(BASE + "/" + UID_A + "/worker/capacity")
+                    .with(asUser(UID_A, "worker"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                            {"maxConcurrentJobs": 4}
+                            """))
+               .andExpect(status().isBadRequest());
+
+        verify(workerService, never()).updateCapacity(any(), any(), anyBoolean(), anyInt());
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────

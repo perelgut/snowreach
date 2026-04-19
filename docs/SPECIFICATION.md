@@ -1540,3 +1540,278 @@ by the system in Phase 1.
 | AD-3 | Email delivery provider | **SendGrid** | Free tier (100 emails/day) covers Phase 1; clean Java SDK; strong deliverability. **Note: domain verification required before launch** — DNS records (SPF, DKIM, DMARC) must be configured on the sending domain. |
 | AD-4 | GTA neighbourhood dropdown | **Static JSON list bundled with the application** | Rarely-triggered fallback for a fixed geographic scope; Admin configurability would be disproportionate effort. Revisit if GTA scope expands significantly. |
 | AD-5 | Google Maps API key scope | **Server-side only** | Geocoding runs exclusively in the Spring Boot backend; API key stored as server environment variable, never exposed to the browser. No map display in v1 — distance shown as text. Map display deferred to v1.1/v2. |
+
+---
+
+## 16. Revision v1.1 — Negotiated Marketplace Workflow
+
+**Date:** 2026-04-18  
+**Approved by:** Stakeholder (verbal, this session)  
+**Supersedes:** §4 Job State Machine (all states and transitions), §3.2 jobs collection (pricing fields), §5.2 Worker Search dispatch logic.
+
+This revision replaces the original **sequential-dispatch** model (platform pushes offers to workers one at a time, price set by worker's tier table) with a **negotiated marketplace** model (requester proposes a price, top workers are notified, price is agreed bilaterally before escrow is collected).
+
+---
+
+### 16.1 Motivation
+
+The original model had no price transparency for the Requester and no negotiation mechanism. The new model:
+
+- Lets the Requester set an opening price (platform-recommended but editable).
+- Lets Workers accept, counter, or request a property photo before committing.
+- Protects the Requester: they only pay into escrow once a specific price and Worker are agreed.
+- Protects the Worker: address is only revealed after escrow is held.
+- Keeps Admin oversight: block counts per Worker are tracked.
+
+---
+
+### 16.2 New Job State Machine
+
+#### States
+
+| State | Meaning |
+|-------|---------|
+| `POSTED` | Requester submitted job with a proposed price; top 3 Workers notified |
+| `NEGOTIATING` | At least one Worker has responded; bilateral price negotiation in progress |
+| `AGREED` | Requester accepted a specific Worker's terms; awaiting escrow deposit |
+| `ESCROW_HELD` | Requester deposited funds and acknowledged 2-hour approval window; address revealed to Worker |
+| `IN_PROGRESS` | Worker has started on-site |
+| `PENDING_APPROVAL` | Worker posted completion photo and marked job done; awaiting Requester explicit approval |
+| `RELEASED` | Requester approved, or 2-hour auto-approval fired; funds disbursed |
+| `INCOMPLETE` | Worker submitted Cannot Complete; 24-hour resolution window (unchanged) |
+| `DISPUTED` | Requester raised a dispute within 2-hour window; funds frozen |
+| `REFUNDED` | Escrow returned to Requester (terminal) |
+| `SETTLED` | Dispute resolved; funds disbursed per ruling (terminal) |
+| `CANCELLED` | Job cancelled before ESCROW_HELD; no fee unless AGREED was reached* |
+
+*Cancellation fee policy after AGREED TBD (default: no fee, requester already took on negotiation cost in time).
+
+**Retired states** (v1.0 → v1.1 mapping):
+
+| v1.0 | v1.1 |
+|------|------|
+| `REQUESTED` | `POSTED` |
+| `PENDING_DEPOSIT` | `AGREED` |
+| `CONFIRMED` | `ESCROW_HELD` |
+| `COMPLETE` | `PENDING_APPROVAL` |
+
+#### Transition Table
+
+| From | To | Trigger | Guard | Side Effects |
+|------|----|---------|-------|--------------|
+| `POSTED` | `NEGOTIATING` | Worker submits first offer on this job | Worker is available; not in rejectedWorkerIds; within serviceRadius | Create jobOffer doc; set status PENDING_REQUESTER; notify Requester |
+| `POSTED` | `CANCELLED` | Requester cancels or 24-hour no-response timer fires | No escrow held | Notify Workers who had active offers; no fee |
+| `NEGOTIATING` | `NEGOTIATING` | Either party counter-offers | jobOffer exists and is PENDING for the acting party | Update jobOffer; flip status; notify other party |
+| `NEGOTIATING` | `AGREED` | Requester accepts a Worker's offer | Worker's jobOffer status == PENDING_REQUESTER | Set job.agreedWorkerId; set job.agreedPriceCents; close all other jobOffers (SUPERSEDED); start 30-min escrow deposit timer; notify both parties |
+| `NEGOTIATING` | `NEGOTIATING` | Requester rejects a Worker | jobOffer exists | Set jobOffer status = REJECTED; add workerId to rejectedWorkerIds; increment worker.jobRejectionCount90d; notify Worker |
+| `AGREED` | `ESCROW_HELD` | Stripe webhook: payment_intent.succeeded | Amount matches agreedPriceCents + HST | Reveal property address to Worker; open message thread; notify both parties; record approvalWindowHours = 2 |
+| `AGREED` | `POSTED` | 30-min deposit window expires with no payment | — | Cancel Stripe PaymentIntent; restore job to NEGOTIATING (other offers may still be open) or POSTED if none remain; notify Requester |
+| `AGREED` | `CANCELLED` | Either party cancels before deposit | — | Cancel PaymentIntent; notify both; no fee |
+| `ESCROW_HELD` | `IN_PROGRESS` | Worker taps "Start Job" | — | Record inProgressAt; notify Requester |
+| `ESCROW_HELD` | `CANCELLED` | Either party cancels | — | Refund full escrow; $10 cancellation fee deducted; notify both |
+| `IN_PROGRESS` | `PENDING_APPROVAL` | Worker uploads ≥1 completion photo AND taps "Mark Complete" | Photo attached to job | Record completedAt; start 2-hour auto-approval timer; notify Requester to review |
+| `IN_PROGRESS` | `INCOMPLETE` | Worker submits Cannot Complete | — | (unchanged from v1.0) |
+| `PENDING_APPROVAL` | `RELEASED` | Requester taps "Approve" | Within 2-hour window | Disburse: Worker receives agreedPriceCents × 0.85 + HST; YoSnowMow retains agreedPriceCents × 0.15; record releasedAt; send rating prompt |
+| `PENDING_APPROVAL` | `RELEASED` | 2-hour auto-approval timer fires | No open dispute | Same disbursement; note in audit log that auto-approval was used |
+| `PENDING_APPROVAL` | `DISPUTED` | Requester taps "Dispute" | Within 2-hour window | Freeze funds; create Dispute record; cancel auto-approval timer; notify Worker |
+| `RELEASED` | `SETTLED` | (unchanged) | | |
+| `DISPUTED` → resolution | (unchanged from v1.0) | | | |
+
+---
+
+### 16.3 New Firestore Collection: `jobOffers/{jobId}_{workerId}`
+
+One document per (job, worker) pair. Represents the full negotiation thread.
+
+```
+{
+  jobOfferId:              string,   // "{jobId}_{workerId}"
+  jobId:                   string,
+  workerId:                string,
+  workerName:              string,   // denormalized for display
+  status:                  string,   // PENDING_REQUESTER | PENDING_WORKER |
+                                     // AGREED | REJECTED | WITHDRAWN | SUPERSEDED
+  messages: [
+    {
+      fromRole:            string,   // "requester" | "worker"
+      type:                string,   // PRICE_OFFER | PHOTO_REQUEST | PHOTO_UPLOAD | ACCEPT | REJECT | WITHDRAW
+      proposedPriceCents:  number?,  // present for PRICE_OFFER
+      photoUrl:            string?,  // present for PHOTO_UPLOAD
+      note:                string?,  // optional text accompanying any message type
+      sentAt:              timestamp,
+    }
+  ],
+  currentPriceCents:       number,   // latest price on the table (starts with job.postedPriceCents)
+  agreedPriceCents:        number?,  // set only when status == AGREED
+  createdAt:               timestamp,
+  updatedAt:               timestamp,
+}
+```
+
+**Status lifecycle:**
+
+```
+(Worker submits offer)  → PENDING_REQUESTER
+(Requester counters)    → PENDING_WORKER
+(Worker counters back)  → PENDING_REQUESTER
+(Requester accepts)     → AGREED
+(Requester rejects)     → REJECTED
+(Worker withdraws)      → WITHDRAWN
+(Another offer agreed)  → SUPERSEDED
+```
+
+---
+
+### 16.4 Updated `jobs` Fields
+
+Fields **added** to §3.2:
+
+```
+postedPriceCents:        number,   // Requester's opening proposed price (excl. HST)
+agreedPriceCents:        number?,  // Price locked when both parties agree
+agreedWorkerId:          string?,  // UID of the Worker whose offer was accepted
+rejectedWorkerIds:       string[], // Workers blocked from this job by the Requester
+approvalWindowHours:     number,   // acknowledged by Requester at escrow time (default 2)
+approvalWindowAcknowledgedAt: timestamp?, // when Requester acknowledged the window
+postedAt:                timestamp, // replaces requestedAt
+agreedAt:                timestamp?,
+escrowDepositedAt:       timestamp?, // (was depositReceivedAt)
+pendingApprovalAt:       timestamp?, // when Worker marked complete
+approvedAt:              timestamp?,
+```
+
+Fields **retired** (dispatch-specific, no longer applicable):
+- `offerRound` — sequential dispatch round counter
+- `simultaneousOfferWorkerIds` — replaced by `jobOffers` collection
+- `tierPriceCAD` — pricing is now negotiated, not tier-based
+- `offeredAt` — replaced by per-offer timestamps in `jobOffers`
+
+Fields **retained with updated semantics:**
+- `matchedWorkerIds` — top-3 workers who received push notifications at POSTED
+- `contactedWorkerIds` — workers who have an offer document (offered/rejected/withdrawn/superseded)
+- `workerId` — set when job reaches AGREED (the agreed worker)
+
+---
+
+### 16.5 Pricing Formula (updated)
+
+The `postedPriceCents` is the base service price (excluding HST). YoSnowMow recommends this using the existing small/medium/large size tables but the Requester may change it.
+
+At disbursement (RELEASED or SETTLED):
+
+```
+workerReceives  = agreedPriceCents × (1 − commissionRate) + hstAmountCAD
+platformRetains = agreedPriceCents × commissionRate
+requesterPaid   = agreedPriceCents + hstAmountCAD     (at escrow time)
+
+where:
+  commissionRate = 0.15 (standard) | 0.08 (early adopter) | 0.00 (founding worker)
+  hstAmountCAD   = agreedPriceCents × 0.13  (if Worker is HST-registered, else 0)
+```
+
+Example: agreed price $50, non-HST worker, standard commission:
+- Requester pays: $50.00 to escrow
+- Worker receives: $50 × 0.85 = $42.50
+- Platform retains: $50 × 0.15 = $7.50
+
+---
+
+### 16.6 New API Endpoints
+
+#### `POST /api/jobs/{jobId}/offers`
+Worker submits their first response to a job (accept proposed price, counter, or request a photo).
+
+**Roles:** worker  
+**Request:**
+```json
+{
+  "type": "PRICE_OFFER | ACCEPT | PHOTO_REQUEST",
+  "proposedPriceCents": 4500,
+  "note": "Can you send a photo of the driveway?"
+}
+```
+**Response 201:** the created `jobOffer` document.  
+**Side effects:** transitions job POSTED → NEGOTIATING; creates `jobOffers/{jobId}_{workerId}`; notifies Requester.
+
+#### `PUT /api/jobs/{jobId}/offers/{workerId}`
+Either party adds the next message to the negotiation thread (counter-offer, photo upload, accept).
+
+**Roles:** requester (to counter or accept) | worker (to counter or upload photo)  
+**Request:**
+```json
+{
+  "type": "PRICE_OFFER | ACCEPT | PHOTO_UPLOAD | WITHDRAW",
+  "proposedPriceCents": 4200,
+  "photoUrl": "https://...",
+  "note": "Here is the photo."
+}
+```
+**Response 200:** updated `jobOffer` document.  
+**Side effects:** if type == ACCEPT by Requester → job transitions NEGOTIATING → AGREED; all other jobOffers closed SUPERSEDED; 30-min escrow timer started.
+
+#### `POST /api/jobs/{jobId}/offers/{workerId}/reject`
+Requester rejects this specific Worker from this job.
+
+**Roles:** requester  
+**Request:** `{ "reason": "optional note" }`  
+**Response 200:** updated `jobOffer` document (status = REJECTED).  
+**Side effects:** adds workerId to job.rejectedWorkerIds; increments worker.jobRejectionCount90d (rolling 90-day counter for Admin flagging); notifies Worker.
+
+#### `POST /api/jobs/{jobId}/approve`
+Requester explicitly approves completed work.
+
+**Roles:** requester  
+**Request:** none  
+**Response 200:** updated job (status = RELEASED).  
+**Side effects:** cancels auto-approval Quartz timer; disburses funds; sends rating prompt.
+
+#### `POST /api/jobs/{jobId}/photos`
+Upload a job-related photo (property photo for negotiation, OR completion photo).
+
+**Roles:** requester (context = "property") | worker (context = "completion")  
+**Request:** multipart/form-data with `photo` file + `context` field  
+**Response 201:** `{ "photoUrl": "...", "context": "...", "totalPhotos": 2 }`  
+**Side effects:** photo stored in Firebase Storage; URL appended to appropriate ImageRef list on job.
+
+---
+
+### 16.7 Admin Visibility — Worker Rejection Counts
+
+The rolling 90-day rejection counter `worker.jobRejectionCount90d` is:
+- Incremented by `POST /api/jobs/{jobId}/offers/{workerId}/reject`
+- Decremented daily by a Quartz scheduled task that ages off counts older than 90 days (or recalculated from the audit log)
+- Displayed on the Admin Users tab and Admin JobDetail dispatch queue
+
+**Flagging thresholds (configurable in `platformConfig`):**
+- ≥ 3 rejections in 90 days → `informational` flag (admin notified, no auto-action)
+- ≥ 5 rejections in 90 days → `warning` flag (admin review recommended)
+- ≥ 10 rejections in 90 days → `critical` flag (recommend ban review)
+
+---
+
+### 16.8 Implementation Phases
+
+#### Phase A — Backend state machine (no UI change)
+1. Rename job statuses: REQUESTED→POSTED, PENDING_DEPOSIT→AGREED, CONFIRMED→ESCROW_HELD, COMPLETE→PENDING_APPROVAL
+2. Add `NEGOTIATING` state to transition table in `JobService`
+3. Create `JobOffer` Firestore model + `OfferService` (offer/counter/accept/reject/withdraw)
+4. Update `MatchingService`: send push notifications to top 3 instead of sequential Quartz dispatch
+5. Remove sequential dispatch Quartz timers; add 24-hr POSTED expiry timer
+6. Add `jobRejectionCount90d` field to WorkerProfile; add Quartz 90-day cleanup task
+7. Add new API endpoints (§16.6)
+8. Update existing tests
+
+#### Phase B — Requester: price proposal + offer management
+1. PostJob: add price field with YSM-recommended value; keep address/services/schedule
+2. JobStatus: show incoming offers with Accept / Counter / Reject per worker
+3. Escrow payment page: Stripe deposit with explicit 2-hour window acknowledgment checkbox
+
+#### Phase C — Worker: offer response + photo upload
+1. JobRequest page: show proposed price; buttons for Accept / Counter / Request Photo
+2. Photo upload on job (property photo during negotiation; completion photo at PENDING_APPROVAL)
+3. Mark Complete: require at least one completion photo
+
+#### Phase D — Completion approval flow
+1. Requester JobStatus at PENDING_APPROVAL: show worker's completion photo; Approve / Dispute buttons
+2. 2-hour countdown timer visible to Requester
+3. Auto-approval Quartz timer fires if no action taken

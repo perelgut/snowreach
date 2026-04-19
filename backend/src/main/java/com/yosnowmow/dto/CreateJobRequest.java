@@ -1,5 +1,6 @@
 package com.yosnowmow.dto;
 
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
@@ -14,8 +15,8 @@ import java.util.List;
  * from their user profile — they do not re-enter it here.  This matches the
  * spec §5.3 which requires Requester.address to be on file before posting.
  *
- * Pricing is not included here — it is determined by the matched Worker's
- * tier distance and locked when the Worker accepts.
+ * In v1.1 the Requester proposes the initial price via {@code postedPriceCents}.
+ * YSM recommends a price but the Requester may override it.
  */
 public class CreateJobRequest {
 
@@ -73,6 +74,14 @@ public class CreateJobRequest {
     @Size(max = 5, message = "requestImageIds must not exceed 5 entries")
     private List<String> requestImageIds;
 
+    /**
+     * Requester's proposed price in cents.
+     * YSM recommends a price based on scope and area; the Requester may change it.
+     * Must be ≥ 100 (= $1.00 CAD) when provided.
+     */
+    @Min(value = 100, message = "postedPriceCents must be at least $1.00")
+    private Integer postedPriceCents;
+
     // ── Getters & Setters ────────────────────────────────────────────────────
 
     public List<String> getScope() { return scope; }
@@ -98,4 +107,7 @@ public class CreateJobRequest {
 
     public List<String> getRequestImageIds() { return requestImageIds; }
     public void setRequestImageIds(List<String> requestImageIds) { this.requestImageIds = requestImageIds; }
+
+    public Integer getPostedPriceCents() { return postedPriceCents; }
+    public void setPostedPriceCents(Integer postedPriceCents) { this.postedPriceCents = postedPriceCents; }
 }

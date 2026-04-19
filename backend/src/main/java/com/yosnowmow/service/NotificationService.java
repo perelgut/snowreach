@@ -691,6 +691,316 @@ public class NotificationService {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    // ── Background check notifications (P3-01) ───────────────────────────────
+
+    /**
+     * Emails the Worker that their background check passed and their account is now active.
+     *
+     * @param workerUid Firebase UID of the Worker
+     */
+    @Async
+    public void sendBackgroundCheckApproved(String workerUid) {
+        String email = lookupEmail(workerUid);
+        if (email == null) return;
+        sendEmail(email, "Your YoSnowMow background check is approved!",
+                buildHtml("Background Check Approved", """
+                        <p>Great news! Your background check has been reviewed and cleared.</p>
+                        <p>Your YoSnowMow Worker account is now <strong>active</strong>.
+                        Make sure your profile is up to date, then set your status to
+                        <strong>Available</strong> to start receiving job requests.</p>
+                        <p>Welcome to the team!</p>
+                        """));
+    }
+
+    /**
+     * Emails the Worker that their background check raised concerns and their account
+     * is under Admin review.
+     *
+     * @param workerUid Firebase UID of the Worker
+     */
+    @Async
+    public void sendBackgroundCheckFailed(String workerUid) {
+        String email = lookupEmail(workerUid);
+        if (email == null) return;
+        sendEmail(email, "YoSnowMow background check — account suspended",
+                buildHtml("Background Check — Account Suspended", """
+                        <p>We were unable to approve your YoSnowMow Worker account after
+                        reviewing the results of your background check.</p>
+                        <p>If you believe this is an error, please reply to this email
+                        and our team will review your case.</p>
+                        """));
+    }
+
+    /**
+     * Notifies the admin that a background check requires manual review (Certn REVIEW result).
+     *
+     * @param workerUid    Firebase UID of the Worker
+     * @param certnOrderId Certn order ID for cross-referencing
+     */
+    @Async
+    public void notifyAdminBackgroundCheckReview(String workerUid, String certnOrderId) {
+        sendEmail(ADMIN_EMAIL, "[Action Required] Background check needs review — " + workerUid,
+                buildHtml("Background Check Needs Review", """
+                        <p>A background check returned a <strong>REVIEW</strong> result and
+                        requires manual adjudication.</p>
+                        <ul>
+                          <li><strong>Worker UID:</strong> %s</li>
+                          <li><strong>Certn Order ID:</strong> %s</li>
+                        </ul>
+                        <p>Log in to the Admin Dashboard to approve or reject this Worker.</p>
+                        """.formatted(workerUid, certnOrderId)));
+    }
+
+    /**
+     * Emails the Worker that an Admin has reviewed and rejected their background check
+     * (decision = REJECTED following a Certn REVIEW result).
+     *
+     * @param workerUid Firebase UID of the Worker
+     */
+    @Async
+    public void sendBackgroundCheckRejected(String workerUid) {
+        String email = lookupEmail(workerUid);
+        if (email == null) return;
+        sendEmail(email, "YoSnowMow background check — application not approved",
+                buildHtml("Background Check — Application Not Approved", """
+                        <p>After reviewing the results of your background check, we are unable
+                        to approve your YoSnowMow Worker application at this time.</p>
+                        <p>If you believe this decision is in error, please reply to this email
+                        and our team will review your case.</p>
+                        """));
+    }
+
+    /**
+     * Notifies the admin that a background check has failed (Certn FAIL result).
+     *
+     * @param workerUid    Firebase UID of the Worker
+     * @param certnOrderId Certn order ID for cross-referencing
+     */
+    @Async
+    public void notifyAdminBackgroundCheckFailed(String workerUid, String certnOrderId) {
+        sendEmail(ADMIN_EMAIL, "[FYI] Background check FAILED — Worker suspended: " + workerUid,
+                buildHtml("Background Check Failed — Account Suspended", """
+                        <p>A background check returned a <strong>FAIL</strong> result.
+                        The Worker's account has been automatically suspended.</p>
+                        <ul>
+                          <li><strong>Worker UID:</strong> %s</li>
+                          <li><strong>Certn Order ID:</strong> %s</li>
+                        </ul>
+                        """.formatted(workerUid, certnOrderId)));
+    }
+
+    // ── Insurance notifications (P3-03) ──────────────────────────────────────
+
+    /**
+     * Notifies the admin that a Worker has submitted an insurance document for review.
+     *
+     * @param workerUid  Firebase UID of the Worker
+     * @param workerName Display name of the Worker
+     */
+    @Async
+    public void notifyAdminInsuranceSubmitted(String workerUid, String workerName) {
+        sendEmail(ADMIN_EMAIL,
+                "[Action Required] Insurance document submitted for review — " + workerName,
+                buildHtml("Insurance Document Submitted", """
+                        <p>Worker <strong>%s</strong> (<code>%s</code>) has uploaded an insurance
+                        document for review.</p>
+                        <p>Please log in to the Admin Dashboard to verify or reject the document.</p>
+                        """.formatted(workerName, workerUid)));
+    }
+
+    /**
+     * Emails the Worker that their insurance document has been verified and accepted.
+     *
+     * @param workerUid Firebase UID of the Worker
+     */
+    @Async
+    public void sendInsuranceApproved(String workerUid) {
+        String email = lookupEmail(workerUid);
+        if (email == null) return;
+        sendEmail(email, "Your YoSnowMow insurance document is verified",
+                buildHtml("Insurance Verified", """
+                        <p>Your insurance document has been reviewed and is now on file.</p>
+                        <p>Your profile now displays the <strong>Insured</strong> trust badge.</p>
+                        <p>Remember to upload a new document before your policy expires to keep
+                        your badge active.</p>
+                        """));
+    }
+
+    /**
+     * Emails the Worker that their insurance document was rejected by an Admin.
+     *
+     * @param workerUid Firebase UID of the Worker
+     */
+    @Async
+    public void sendInsuranceRejected(String workerUid) {
+        String email = lookupEmail(workerUid);
+        if (email == null) return;
+        sendEmail(email, "YoSnowMow insurance document — not accepted",
+                buildHtml("Insurance Document Not Accepted", """
+                        <p>Unfortunately, we were unable to accept your insurance document.
+                        This may be because the document was incomplete, illegible, or expired.</p>
+                        <p>Please upload a new, valid certificate of insurance.
+                        If you have questions, please reply to this email.</p>
+                        """));
+    }
+
+    /**
+     * Sends a renewal reminder email when a Worker's insurance is expiring within 30 days.
+     *
+     * @param workerUid  Firebase UID of the Worker
+     * @param expiryDate ISO-8601 expiry date string (YYYY-MM-DD) — included in the email body
+     */
+    @Async
+    public void sendInsuranceRenewalReminder(String workerUid, String expiryDate) {
+        String email = lookupEmail(workerUid);
+        if (email == null) return;
+        sendEmail(email, "Action required: your YoSnowMow insurance expires soon",
+                buildHtml("Insurance Expiring Soon", """
+                        <p>Your insurance document on file expires on <strong>%s</strong>.</p>
+                        <p>Please upload a new, valid certificate of insurance <strong>before that date
+                        </strong> to avoid having your Worker account deactivated.</p>
+                        <p>Log in to your YoSnowMow account to upload a new document.</p>
+                        """.formatted(expiryDate)));
+    }
+
+    /**
+     * Emails the Worker that their insurance has expired and their account is deactivated.
+     *
+     * @param workerUid Firebase UID of the Worker
+     */
+    @Async
+    public void sendInsuranceExpired(String workerUid) {
+        String email = lookupEmail(workerUid);
+        if (email == null) return;
+        sendEmail(email, "Your YoSnowMow insurance has expired — account deactivated",
+                buildHtml("Insurance Expired — Account Deactivated", """
+                        <p>Your insurance document on file has expired and your Worker account has
+                        been <strong>temporarily deactivated</strong>.</p>
+                        <p>To reactivate your account, please upload a valid, current certificate
+                        of insurance. Once it is verified, your account will be reactivated.</p>
+                        <p>If you need assistance, please reply to this email.</p>
+                        """));
+    }
+
+    // ── Fraud detection notifications (P3-05) ────────────────────────────────
+
+    /**
+     * Notifies a Worker that their payout has been placed under review due to a
+     * fraud flag.  Payment will be released or denied after Admin review.
+     *
+     * @param workerUid Firebase Auth UID of the Worker
+     * @param jobId     the flagged job ID
+     */
+    @Async
+    public void sendPayoutUnderReview(String workerUid, String jobId) {
+        String email = lookupEmail(workerUid);
+        if (email == null) return;
+        sendEmail(email, "Your YoSnowMow payment is under review",
+                buildHtml("Payment Under Review", """
+                        <p>Your payment for job <strong>%s</strong> has been placed under a
+                        brief security review.</p>
+                        <p>You will receive another email once the review is complete.
+                        This process typically takes less than 24 hours.</p>
+                        <p>If you have questions, please reply to this email.</p>
+                        """.formatted(jobId)));
+    }
+
+    /**
+     * Notifies the Admin that a fraud flag has been raised for a Worker payout.
+     *
+     * @param workerUid      Firebase Auth UID of the Worker
+     * @param jobId          the flagged job ID
+     * @param triggeredRules list of rule names that triggered
+     */
+    @Async
+    public void notifyAdminFraudFlag(String workerUid, String jobId,
+                                     java.util.List<String> triggeredRules) {
+        String rulesHtml = triggeredRules.stream()
+                .map(r -> "<li>" + r + "</li>")
+                .collect(java.util.stream.Collectors.joining());
+        sendEmail(ADMIN_EMAIL, "[Action Required] Fraud flag — Worker " + workerUid,
+                buildHtml("Fraud Flag Raised — Review Required", """
+                        <p>A payout for job <strong>%s</strong> (worker <strong>%s</strong>)
+                        has been flagged by the fraud detection engine.</p>
+                        <p><strong>Rules triggered:</strong></p>
+                        <ul>%s</ul>
+                        <p>Please review the fraud flags dashboard and approve or reject
+                        the payout.</p>
+                        """.formatted(jobId, workerUid, rulesHtml)));
+    }
+
+    // ── Account moderation (P3-06) ────────────────────────────────────────────
+
+    /**
+     * Notifies a user that their account has been permanently banned.
+     *
+     * @param uid    Firebase Auth UID of the banned user
+     * @param name   display name
+     * @param reason reason provided by the admin
+     */
+    @Async
+    public void sendAccountBannedEmail(String uid, String name, String reason) {
+        String email = lookupEmail(uid);
+        if (email == null) return;
+        String displayName = name != null ? name : "User";
+        sendEmail(email, "Your YoSnowMow account has been suspended",
+                buildHtml("Account Action — Access Suspended", """
+                        <p>Hi %s,</p>
+                        <p>Your YoSnowMow account has been permanently suspended following a
+                        review by our Trust &amp; Safety team.</p>
+                        <p><strong>Reason:</strong> %s</p>
+                        <p>If you believe this decision was made in error, please reply to
+                        this email and include your account email address.</p>
+                        """.formatted(displayName, reason)));
+    }
+
+    /**
+     * Notifies a user that their account has been temporarily suspended.
+     *
+     * @param uid            Firebase Auth UID of the suspended user
+     * @param name           display name
+     * @param reason         reason provided by the admin
+     * @param suspendedUntil the date/time the suspension expires
+     */
+    @Async
+    public void sendAccountSuspendedEmail(String uid, String name, String reason,
+                                          java.util.Date suspendedUntil) {
+        String email = lookupEmail(uid);
+        if (email == null) return;
+        String displayName = name != null ? name : "User";
+        String untilStr = suspendedUntil != null
+                ? new java.text.SimpleDateFormat("MMMM d, yyyy").format(suspendedUntil)
+                : "a future date";
+        sendEmail(email, "Your YoSnowMow account has been temporarily suspended",
+                buildHtml("Account Action — Temporary Suspension", """
+                        <p>Hi %s,</p>
+                        <p>Your YoSnowMow account has been temporarily suspended until
+                        <strong>%s</strong>.</p>
+                        <p><strong>Reason:</strong> %s</p>
+                        <p>Your account will be automatically reinstated on the date shown
+                        above.  If you have questions, please reply to this email.</p>
+                        """.formatted(displayName, untilStr, reason)));
+    }
+
+    /**
+     * Notifies a Worker that their payout has been denied following fraud review.
+     *
+     * @param workerUid Firebase Auth UID of the Worker
+     * @param jobId     the flagged job ID
+     */
+    @Async
+    public void sendPayoutDenied(String workerUid, String jobId) {
+        String email = lookupEmail(workerUid);
+        if (email == null) return;
+        sendEmail(email, "YoSnowMow — payment decision for job " + jobId,
+                buildHtml("Payment Decision — Payout Not Released", """
+                        <p>After completing our security review, we are unable to release
+                        the payment for job <strong>%s</strong>.</p>
+                        <p>If you believe this is an error, please contact us by replying
+                        to this email.</p>
+                        """.formatted(jobId)));
+    }
+
     /**
      * Sends a push notification via Firebase Cloud Messaging and writes the
      * notification to the user's in-app feed regardless of FCM token availability.
@@ -872,6 +1182,72 @@ public class NotificationService {
      * Returns a human-readable address string.
      * Prefers {@code fullText}; falls back to structured field concatenation.
      */
+    // ── v1.1 Negotiated-marketplace notifications (stubs — wired in P1-18) ────
+
+    /** Notifies a Worker that a new job has been posted nearby. */
+    @Async
+    public void notifyWorkerNewJobPosted(String workerUid, String jobId, int postedCents) {
+        Map<String, String> data = new HashMap<>();
+        data.put("jobId", jobId);
+        data.put("type",  "NEW_JOB_POSTED");
+        data.put("price", String.valueOf(postedCents));
+        sendPush(workerUid, "NEW_JOB_POSTED", "New job nearby",
+                "A new snow-clearing job is available — tap to view.", data);
+    }
+
+    /** Notifies the Requester that a Worker has submitted an offer on their job. */
+    @Async
+    public void notifyRequesterOfferReceived(String requesterId, String jobId, String workerId) {
+        Map<String, String> data = new HashMap<>();
+        data.put("jobId", jobId);
+        data.put("type",  "OFFER_RECEIVED");
+        sendPush(requesterId, "OFFER_RECEIVED", "Offer received",
+                "A Worker has responded to your job posting.", data);
+    }
+
+    /** Notifies the Worker that the Requester countered their offer. */
+    @Async
+    public void notifyWorkerRequesterCountered(String workerUid, String jobId, int counterCents) {
+        Map<String, String> data = new HashMap<>();
+        data.put("jobId",  jobId);
+        data.put("type",   "REQUESTER_COUNTERED");
+        data.put("price",  String.valueOf(counterCents));
+        sendPush(workerUid, "REQUESTER_COUNTERED", "Counter-offer received",
+                "The requester has proposed a new price — tap to respond.", data);
+    }
+
+    /** Notifies the Worker that their offer was accepted and the job is now AGREED. */
+    @Async
+    public void notifyWorkerOfferAgreed(String workerUid, String jobId, int agreedCents) {
+        Map<String, String> data = new HashMap<>();
+        data.put("jobId",  jobId);
+        data.put("type",   "OFFER_AGREED");
+        data.put("price",  String.valueOf(agreedCents));
+        sendPush(workerUid, "OFFER_AGREED", "Deal agreed!",
+                "The requester accepted your price. Waiting for escrow deposit.", data);
+    }
+
+    /** Notifies the Requester that the price is agreed and they should deposit escrow. */
+    @Async
+    public void notifyRequesterReadyForEscrow(String requesterId, String jobId, int agreedCents) {
+        Map<String, String> data = new HashMap<>();
+        data.put("jobId",  jobId);
+        data.put("type",   "READY_FOR_ESCROW");
+        data.put("price",  String.valueOf(agreedCents));
+        sendPush(requesterId, "READY_FOR_ESCROW", "Price agreed — deposit now",
+                "Both parties have agreed on a price. Please deposit payment to escrow.", data);
+    }
+
+    /** Notifies the Worker that the Requester has rejected them from this job. */
+    @Async
+    public void notifyWorkerRejected(String workerUid, String jobId) {
+        Map<String, String> data = new HashMap<>();
+        data.put("jobId", jobId);
+        data.put("type",  "WORKER_REJECTED");
+        sendPush(workerUid, "WORKER_REJECTED", "Job no longer available",
+                "The requester has selected another Worker for this job.", data);
+    }
+
     private static String formatAddress(Address address) {
         if (address == null) return "the property";
         if (address.getFullText() != null && !address.getFullText().isBlank()) {

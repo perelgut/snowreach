@@ -13,6 +13,7 @@ import com.stripe.net.Webhook;
 import com.yosnowmow.model.Address;
 import com.yosnowmow.model.Job;
 import com.yosnowmow.config.SecurityConfig;
+import com.yosnowmow.service.BackgroundCheckService;
 import com.yosnowmow.service.JobService;
 import com.yosnowmow.service.NotificationService;
 import com.yosnowmow.service.PaymentService;
@@ -97,10 +98,11 @@ class WebhookControllerTest {
 
     // ── Spring beans required by WebhookController ───────────────────────────
 
-    @MockBean private PaymentService      paymentService;
-    @MockBean private JobService          jobService;
-    @MockBean private NotificationService notificationService;
-    @MockBean private Firestore           firestore;
+    @MockBean private PaymentService         paymentService;
+    @MockBean private JobService             jobService;
+    @MockBean private NotificationService    notificationService;
+    @MockBean private Firestore              firestore;
+    @MockBean private BackgroundCheckService backgroundCheckService;
 
     // FirebaseAuth satisfies FirebaseTokenFilter's constructor.
     // The filter is a Filter bean and is included in the @WebMvcTest slice.
@@ -251,10 +253,10 @@ class WebhookControllerTest {
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("payment_intent.succeeded: job in PENDING_DEPOSIT → 200, transitions to CONFIRMED")
+    @DisplayName("payment_intent.succeeded: job in AGREED → 200, transitions to ESCROW_HELD")
     void paymentSucceeded_pendingDeposit_transitionsToConfirmed() throws Exception {
         when(jobService.getJob(JOB_ID))
-            .thenReturn(makeJob(JOB_ID, "PENDING_DEPOSIT", REQUESTER_ID, WORKER_ID));
+            .thenReturn(makeJob(JOB_ID, "AGREED", REQUESTER_ID, WORKER_ID));
 
         Event event = buildEvent(
             "payment_intent.succeeded", EVT_ID,
@@ -271,15 +273,15 @@ class WebhookControllerTest {
                    .andExpect(status().isOk());
         }
 
-        verify(jobService).transitionStatus(eq(JOB_ID), eq("CONFIRMED"), eq("stripe"), any());
+        verify(jobService).transitionStatus(eq(JOB_ID), eq("ESCROW_HELD"), eq("stripe"), any());
     }
 
     @Test
-    @DisplayName("payment_intent.succeeded: job already CONFIRMED → 200, no duplicate transition")
+    @DisplayName("payment_intent.succeeded: job already ESCROW_HELD → 200, no duplicate transition")
     void paymentSucceeded_alreadyConfirmed_skipsTransition() throws Exception {
-        // Idempotency guard: job is already past PENDING_DEPOSIT — do not re-transition
+        // Idempotency guard: job is already past AGREED — do not re-transition
         when(jobService.getJob(JOB_ID))
-            .thenReturn(makeJob(JOB_ID, "CONFIRMED", REQUESTER_ID, WORKER_ID));
+            .thenReturn(makeJob(JOB_ID, "ESCROW_HELD", REQUESTER_ID, WORKER_ID));
 
         Event event = buildEvent(
             "payment_intent.succeeded", EVT_ID,

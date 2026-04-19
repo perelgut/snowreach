@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import useAuth from '../hooks/useAuth'
 import logoBW from '../assets/logo-bw.png'
 
 const NAV = [
@@ -31,9 +32,14 @@ function NavItems({ onNavigate }) {
 export default function AdminLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const navigate = useNavigate()
+  const { userProfile, signOut } = useAuth()
+  const displayName = userProfile?.name || 'Admin User'
 
-  function handleNavClick() {
-    setDrawerOpen(false)
+  function handleNavClick() { setDrawerOpen(false) }
+
+  async function handleSignOut() {
+    await signOut()
+    navigate('/login', { replace: true })
   }
 
   return (
@@ -54,8 +60,9 @@ export default function AdminLayout() {
         <nav style={{ flex: 1, padding: 'var(--sp-4) var(--sp-3)' }}>
           <NavItems onNavigate={() => {}} />
         </nav>
-        <div style={{ padding: 'var(--sp-4)', borderTop: '1px solid rgba(255,255,255,.08)', fontSize: 12, color: 'rgba(255,255,255,.4)' }}>
-          Admin User
+        <div style={{ padding: 'var(--sp-4)', borderTop: '1px solid rgba(255,255,255,.08)', fontSize: 12, color: 'rgba(255,255,255,.4)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span>{displayName}</span>
+          <button onClick={handleSignOut} style={{ background: 'none', border: '1px solid rgba(255,255,255,.2)', borderRadius: 6, padding: '4px 8px', fontSize: 11, color: 'rgba(255,255,255,.6)', cursor: 'pointer', textAlign: 'left' }}>Sign out</button>
         </div>
       </aside>
 

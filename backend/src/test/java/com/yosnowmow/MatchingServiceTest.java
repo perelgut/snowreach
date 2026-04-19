@@ -13,8 +13,8 @@ import org.mockito.Answers;
 import com.yosnowmow.model.Job;
 import com.yosnowmow.model.User;
 import com.yosnowmow.model.WorkerProfile;
-import com.yosnowmow.service.DispatchService;
 import com.yosnowmow.service.MatchingService;
+import com.yosnowmow.service.NotificationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -64,8 +64,8 @@ class MatchingServiceTest {
 
     // ── Mocked dependencies ───────────────────────────────────────────────────
 
-    @Mock private Firestore       firestore;
-    @Mock private DispatchService dispatchService;
+    @Mock private Firestore             firestore;
+    @Mock private NotificationService   notificationService;
 
     // Firestore: jobs collection chain.
     // RETURNS_DEEP_STUBS lets update() return a mock ApiFuture without explicit stubbing —
@@ -79,6 +79,10 @@ class MatchingServiceTest {
     @Mock private CollectionReference usersCollection;
     @Mock private Query               usersQuery;
     @Mock private QuerySnapshot       usersQuerySnapshot;
+
+    // Firestore: capacity check chain — jobs.whereEqualTo("workerId",uid).whereIn("status",[...]).get()
+    @Mock private Query               capacityCheckQuery;
+    @Mock private QuerySnapshot       capacityCheckSnap;
 
     @InjectMocks
     private MatchingService matchingService;
@@ -117,6 +121,13 @@ class MatchingServiceTest {
         when(firestore.collection("users")).thenReturn(usersCollection);
         when(usersCollection.whereEqualTo(anyString(), any())).thenReturn(usersQuery);
         when(usersQuery.get()).thenReturn(ApiFutures.immediateFuture(usersQuerySnapshot));
+
+        // Capacity-check chain (P2-05): collection("jobs").whereEqualTo("workerId",uid).whereIn(...).get()
+        // Default: 0 active jobs → worker has capacity.  Override in specific tests to simulate full capacity.
+        when(jobsCollection.whereEqualTo(anyString(), any())).thenReturn(capacityCheckQuery);
+        when(capacityCheckQuery.whereIn(anyString(), any())).thenReturn(capacityCheckQuery);
+        when(capacityCheckQuery.get()).thenReturn(ApiFutures.immediateFuture(capacityCheckSnap));
+        when(capacityCheckSnap.size()).thenReturn(0);
 
         // Job update (matchedWorkerIds) is handled by RETURNS_DEEP_STUBS on jobDocRef —
         // the deep-stub mock ApiFuture.get() returns null, which is discarded by the caller.
@@ -295,6 +306,41 @@ class MatchingServiceTest {
         assertThat(matched).doesNotContain("random-wkr");
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Capacity enforcement (P2-05) — live Firestore query replaces cached field
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("Worker at full capacity (1/1 active jobs) is excluded from candidates")
+    void matching_workerAtCapacity_isExcluded() throws Exception {
+        // Worker has capacityMax=1; live query reports 1 active job → at capacity → excluded.
+        User worker = makeWorkerUser("wkr-full", latOffsetKm(2.0), JOB_LON, 10.0, 4.5);
+        stubJobAndWorkers(makeJob(false), List.of(worker));
+
+        // Simulate 1 live active job for this worker (equals capacityMax of 1).
+        when(capacityCheckSnap.size()).thenReturn(1);
+
+        matchingService.matchAndStoreWorkers(JOB_ID);
+
+        assertThat(captureMatchedWorkerIds()).doesNotContain("wkr-full");
+    }
+
+    @Test
+    @DisplayName("Worker below capacity (0/2 active jobs) is included in candidates")
+    void matching_workerBelowCapacity_isIncluded() throws Exception {
+        // Worker has capacityMax=2; live query reports 1 active job → still has capacity → included.
+        User worker = makeWorkerUser("wkr-has-cap", latOffsetKm(2.0), JOB_LON, 10.0, 4.5);
+        worker.getWorker().setCapacityMax(2);
+        stubJobAndWorkers(makeJob(false), List.of(worker));
+
+        // Simulate 1 live active job — below the max of 2.
+        when(capacityCheckSnap.size()).thenReturn(1);
+
+        matchingService.matchAndStoreWorkers(JOB_ID);
+
+        assertThat(captureMatchedWorkerIds()).contains("wkr-has-cap");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /**
@@ -313,7 +359,7 @@ class MatchingServiceTest {
     private static Job makeJob(boolean personalWorkerOnly) {
         Job job = new Job();
         job.setJobId(JOB_ID);
-        job.setStatus("REQUESTED");
+        job.setStatus("POSTED");
         job.setPropertyCoords(new GeoPoint(JOB_LAT, JOB_LON));
         job.setPersonalWorkerOnly(personalWorkerOnly);
         return job;

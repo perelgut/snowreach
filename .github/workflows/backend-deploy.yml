@@ -97,6 +97,7 @@ jobs:
             --image ${{ env.IMAGE }}:${{ github.sha }} \
             --region ${{ env.REGION }} \
             --platform managed \
+            --service-account cloud-run-runtime@${{ secrets.GOOGLE_CLOUD_PROJECT }}.iam.gserviceaccount.com \
             --min-instances 1 \
             --max-instances 10 \
             --memory 512Mi \
