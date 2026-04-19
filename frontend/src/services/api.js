@@ -288,7 +288,7 @@ export const completeJob = (jobId) =>
  */
 export const uploadJobPhoto = (jobId, file) => {
   const formData = new FormData()
-  formData.append('photo', file)
+  formData.append('file', file)
   return api.post(`/api/jobs/${jobId}/photos`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data)
