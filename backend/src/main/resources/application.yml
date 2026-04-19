@@ -51,6 +51,8 @@ yosnowmow:
       - http://localhost:5000    # Firebase Hosting emulator
       - https://yosnowmow-dev.web.app
       - https://yosnowmow-dev.firebaseapp.com
+      - https://yosnowmow-prod.web.app
+      - https://yosnowmow-prod.firebaseapp.com
       - https://yosnowmow.com
       - https://www.yosnowmow.com
 
