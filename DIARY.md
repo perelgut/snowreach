@@ -4361,3 +4361,24 @@ The old version used v1.0 status names. Updated throughout:
 - End-to-end testing in Firebase emulator (seed workers need to be in `matchedWorkerIds` of test jobs)
 - Rating flow UI (post-RELEASED) — Phase E
 - Stripe escrow payment integration (AGREED → ESCROW_HELD) — deferred to later phase
+
+---
+
+## 2026-04-19 — Hotfix: Admin JobDetail override status list
+
+### Problem found during emulator e2e testing
+
+While following the end-to-end test instructions (Step 5-D: simulate escrow via admin override), the Override Status dropdown in `frontend/src/pages/admin/JobDetail.jsx` did not include `ESCROW_HELD`. The `ALL_STATUSES` array and `STATE_LABELS` map were still using v1.0 names (REQUESTED, PENDING_DEPOSIT, CONFIRMED, COMPLETE).
+
+### Fix
+
+Updated `ALL_STATUSES` to:
+```js
+['POSTED', 'NEGOTIATING', 'AGREED', 'ESCROW_HELD', 'IN_PROGRESS',
+ 'PENDING_APPROVAL', 'RELEASED', 'DISPUTED', 'CANCELLED', 'INCOMPLETE',
+ 'REFUNDED', 'SETTLED']
+```
+
+Updated `STATE_LABELS` keys to match: POSTED, NEGOTIATING, AGREED, ESCROW_HELD, IN_PROGRESS, PENDING_APPROVAL, RELEASED.
+
+Committed as hotfix `f7e60f8`. No test changes needed (admin UI is not covered by the backend test suite).
