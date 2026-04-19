@@ -2,7 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import StatusPill from '../../components/StatusPill'
 import Modal from '../../components/Modal'
-import { getJob, getUser, overrideJobStatus, releasePayment, refundJob } from '../../services/api'
+import {
+  getJob, getUser, getDispute, resolveDispute,
+  overrideJobStatus, releasePayment, refundJob,
+} from '../../services/api'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -10,8 +13,8 @@ import { getJob, getUser, overrideJobStatus, releasePayment, refundJob } from '.
 const fmtCAD = (cad) => cad != null ? '$' + Number(cad).toFixed(2) : '—'
 
 /**
- * Convert a Firestore Timestamp (serialised as {seconds, nanos}) to a JS Date.
- * Handles both the official SDK shape and the alternate _seconds/_nanoseconds shape.
+ * Convert a Firestore Timestamp ({seconds, nanos}) to a JS Date.
+ * Handles both SDK shape and the alternate _seconds/_nanoseconds shape.
  */
 const tsToDate = (ts) => {
   if (!ts) return null
@@ -43,16 +46,18 @@ const initials = (name) =>
 
 const STATE_ORDER  = ['REQUESTED', 'PENDING_DEPOSIT', 'CONFIRMED', 'IN_PROGRESS', 'COMPLETE', 'RELEASED']
 const ALL_STATUSES = [
-  'REQUESTED', 'PENDING_DEPOSIT', 'CONFIRMED', 'IN_PROGRESS', 'COMPLETE',
-  'RELEASED', 'DISPUTED', 'CANCELLED', 'INCOMPLETE', 'REFUNDED', 'SETTLED',
+  'POSTED', 'NEGOTIATING', 'AGREED', 'ESCROW_HELD', 'IN_PROGRESS',
+  'PENDING_APPROVAL', 'RELEASED', 'DISPUTED', 'CANCELLED', 'INCOMPLETE',
+  'REFUNDED', 'SETTLED',
 ]
 const STATE_LABELS = {
-  REQUESTED:       'Job Posted',
-  PENDING_DEPOSIT: 'Awaiting Payment',
-  CONFIRMED:       'Worker Confirmed',
-  IN_PROGRESS:     'Work In Progress',
-  COMPLETE:        'Work Complete',
-  RELEASED:        'Payment Released',
+  POSTED:           'Job Posted',
+  NEGOTIATING:      'Negotiating',
+  AGREED:           'Price Agreed',
+  ESCROW_HELD:      'Escrow Held',
+  IN_PROGRESS:      'Work In Progress',
+  PENDING_APPROVAL: 'Pending Approval',
+  RELEASED:         'Payment Released',
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -61,15 +66,21 @@ export default function AdminJobDetail() {
   const { id } = useParams()
 
   // ── Remote data ──────────────────────────────────────────────────────────
-  const [job, setJob]             = useState(null)
-  const [requester, setRequester] = useState(null)
-  const [worker, setWorker]       = useState(null)
-  const [loading, setLoading]     = useState(true)
-  const [loadError, setLoadError] = useState(null)
+  const [job, setJob]                         = useState(null)
+  const [requester, setRequester]             = useState(null)
+  const [worker, setWorker]                   = useState(null)
+  const [matchedWorkerProfiles, setMatchedWorkerProfiles] = useState([])
+  const [loading, setLoading]                 = useState(true)
+  const [loadError, setLoadError]             = useState(null)
+
+  // ── Dispute data ─────────────────────────────────────────────────────────
+  const [dispute, setDispute]           = useState(null)
+  const [disputeLoading, setDisputeLoading] = useState(false)
 
   // ── Action state ─────────────────────────────────────────────────────────
   const [actionPending, setActionPending] = useState(false)
   const [actionError, setActionError]     = useState(null)
+  const [resolveSuccess, setResolveSuccess] = useState(null)
 
   // ── Override modal ───────────────────────────────────────────────────────
   const [overrideStatus, setOverrideStatus] = useState('')
@@ -81,16 +92,30 @@ export default function AdminJobDetail() {
   const [refundOpen, setRefundOpen]   = useState(false)
 
   // ── Dispute resolution form ───────────────────────────────────────────────
-  const [resolution, setResolution]               = useState('release')
+  // resolution values match the backend: 'RELEASED' | 'REFUNDED' | 'SPLIT'
+  const [resolution, setResolution]               = useState('RELEASED')
   const [splitPct, setSplitPct]                   = useState(50)
   const [resolveNotes, setResolveNotes]           = useState('')
+  const [notesError, setNotesError]               = useState(null)
   const [resolveConfirmOpen, setResolveConfirmOpen] = useState(false)
 
-  // ── Admin notes (local only — backend API wires in P2-01) ─────────────────
-  const [adminNotes, setAdminNotes] = useState('')
-  const [notesSaved, setNotesSaved] = useState(false)
+  // ── Evidence lightbox ────────────────────────────────────────────────────
+  const [lightboxUrl, setLightboxUrl] = useState(null)
 
-  // ── Load job + both parties ───────────────────────────────────────────────
+  // ── Loaders ───────────────────────────────────────────────────────────────
+
+  const loadDispute = useCallback(async (disputeId) => {
+    if (!disputeId) return
+    try {
+      setDisputeLoading(true)
+      const d = await getDispute(disputeId)
+      setDispute(d)
+    } catch (err) {
+      console.warn('[JobDetail] Could not load dispute:', err.message)
+    } finally {
+      setDisputeLoading(false)
+    }
+  }, [])
 
   const loadJob = useCallback(async () => {
     try {
@@ -99,14 +124,25 @@ export default function AdminJobDetail() {
       const j = await getJob(id)
       setJob(j)
 
-      // Fetch requester and worker in parallel; silently swallow individual failures
-      // so one missing user profile doesn't block the whole page.
+      // Fetch requester, assigned worker, and dispatch queue profiles in parallel
       const fetches = [
         getUser(j.requesterId).then(setRequester).catch(() => {}),
       ]
       if (j.workerId) {
         fetches.push(getUser(j.workerId).then(setWorker).catch(() => {}))
       }
+
+      // Fetch profiles for up to 10 matched workers so the dispatch queue is visible
+      const queueUids = (j.matchedWorkerIds || []).slice(0, 10)
+      if (queueUids.length > 0) {
+        fetches.push(
+          Promise.all(queueUids.map(uid => getUser(uid).catch(() => null)))
+            .then(profiles => setMatchedWorkerProfiles(
+              profiles.map((p, i) => ({ uid: queueUids[i], profile: p }))
+            ))
+        )
+      }
+
       await Promise.all(fetches)
     } catch (err) {
       setLoadError(err.response?.data?.message || err.message || 'Failed to load job')
@@ -116,6 +152,13 @@ export default function AdminJobDetail() {
   }, [id])
 
   useEffect(() => { loadJob() }, [loadJob])
+
+  // Load dispute whenever the job's disputeId is set.
+  useEffect(() => {
+    if (job?.disputeId) {
+      loadDispute(job.disputeId)
+    }
+  }, [job?.disputeId, loadDispute])
 
   // ── Action handlers ───────────────────────────────────────────────────────
 
@@ -164,19 +207,36 @@ export default function AdminJobDetail() {
     }
   }
 
+  /** Validate notes length before opening the confirm modal. */
+  function handleResolveClick() {
+    if (resolveNotes.trim().length < 20) {
+      setNotesError('Resolution notes must be at least 20 characters.')
+      return
+    }
+    setNotesError(null)
+    setResolveConfirmOpen(true)
+  }
+
   async function applyResolve() {
-    // Dispute resolution: 'release' and 'split' both trigger the worker payout;
-    // 'refund' triggers a full refund.  Split payout support wires in P2-01.
     try {
       setActionPending(true)
       setActionError(null)
-      if (resolution === 'refund') {
-        await refundJob(id)
-      } else {
-        await releasePayment(id)
-      }
+      await resolveDispute(dispute.disputeId, {
+        resolution:               resolution,
+        splitPercentageToWorker:  resolution === 'SPLIT' ? splitPct : 0,
+        adminNotes:               resolveNotes.trim(),
+      })
       setResolveConfirmOpen(false)
+      const label = resolution === 'RELEASED' ? 'Release to Worker'
+                  : resolution === 'REFUNDED' ? 'Full Refund to Requester'
+                  : `Split — Worker ${splitPct}% / Requester ${100 - splitPct}%`
+      setResolveSuccess(`Dispute resolved: ${label}`)
       await loadJob()
+      // loadJob only triggers loadDispute when disputeId changes; call explicitly here
+      // because the disputeId stays the same after resolution.
+      if (dispute?.disputeId) {
+        await loadDispute(dispute.disputeId)
+      }
     } catch (err) {
       setActionError(err.response?.data?.message || 'Resolution failed')
     } finally {
@@ -184,11 +244,18 @@ export default function AdminJobDetail() {
     }
   }
 
-  function saveNotes() {
-    // Notes are local-only until the admin notes API is implemented in P2-01.
-    setNotesSaved(true)
-    setTimeout(() => setNotesSaved(false), 2500)
-  }
+  // ── Derived values ────────────────────────────────────────────────────────
+
+  const disputeIsOpen = dispute?.status === 'OPEN'
+
+  // Live split-amount preview (mirrors the P2-03 backend formula).
+  // HST always flows to the Worker in full regardless of split percentage.
+  const workerSplitCAD = (job?.workerPayoutCAD != null && job?.totalAmountCAD != null)
+    ? (job.workerPayoutCAD * splitPct / 100) + (job.hstAmountCAD ?? 0)
+    : null
+  const requesterRefundCAD = (job?.totalAmountCAD != null && workerSplitCAD != null)
+    ? job.totalAmountCAD - workerSplitCAD
+    : null
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -231,6 +298,17 @@ export default function AdminJobDetail() {
         <span style={{ fontWeight: 700 }}>{job.jobId}</span>
         <StatusPill status={job.status} />
       </div>
+
+      {/* Success banner */}
+      {resolveSuccess && (
+        <div style={{
+          marginBottom: 'var(--sp-4)', padding: 'var(--sp-3)',
+          background: '#F0FDF4', borderRadius: 8, color: 'var(--green)',
+          fontSize: 14, fontWeight: 600,
+        }}>
+          ✓ {resolveSuccess}
+        </div>
+      )}
 
       {/* Global action error banner */}
       {actionError && (
@@ -359,96 +437,295 @@ export default function AdminJobDetail() {
             })}
           </div>
 
-          {/* Active dispute panel — shown only when job is in DISPUTED state */}
-          {job.status === 'DISPUTED' && (
-            <div className="card" style={{ marginBottom: 'var(--sp-4)', borderLeft: '4px solid var(--red)' }}>
-              <h2 style={{ fontWeight: 700, fontSize: 16, marginBottom: 'var(--sp-4)', color: 'var(--red)' }}>
-                Active Dispute
-              </h2>
+          {/* ── Dispatch queue — shown when worker matching data exists ── */}
+          {(job.matchedWorkerIds?.length > 0) && (
+            <div className="card" style={{ marginBottom: 'var(--sp-4)' }}>
+              <h2 style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>Dispatch Queue</h2>
+              <p style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 0, marginBottom: 'var(--sp-4)' }}>
+                {job.matchedWorkerIds.length} worker{job.matchedWorkerIds.length !== 1 ? 's' : ''} matched · offered sequentially by rating then distance
+              </p>
 
-              {job.disputeReason && (
-                <div style={{ marginBottom: 'var(--sp-3)' }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: .5, color: 'var(--gray-400)', marginBottom: 4 }}>
-                    Reason
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {matchedWorkerProfiles.map(({ uid, profile }, i) => {
+                  const w = profile?.worker
+                  const isActive   = (job.simultaneousOfferWorkerIds || []).includes(uid)
+                  const isContacted = (job.contactedWorkerIds || []).includes(uid)
+                  const isAccepted  = job.workerId === uid
+
+                  let badge, badgeBg, badgeColor
+                  if (isAccepted) {
+                    badge = 'Accepted'; badgeBg = '#F0FDF4'; badgeColor = 'var(--green)'
+                  } else if (isActive) {
+                    badge = 'Offer Sent'; badgeBg = '#FFFBEB'; badgeColor = '#B45309'
+                  } else if (isContacted) {
+                    badge = 'Declined / Expired'; badgeBg = 'var(--gray-100)'; badgeColor = 'var(--gray-500)'
+                  } else {
+                    badge = 'Queued'; badgeBg = '#EFF6FF'; badgeColor = 'var(--blue)'
+                  }
+
+                  return (
+                    <div key={uid} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: 'var(--sp-3)',
+                      background: isActive ? '#FFFBEB' : isAccepted ? '#F0FDF4' : 'var(--gray-50)',
+                      borderRadius: 8,
+                      border: `1px solid ${isActive ? '#FDE68A' : isAccepted ? '#BBF7D0' : 'var(--gray-200)'}`,
+                    }}>
+                      {/* Position number */}
+                      <div style={{
+                        width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
+                        background: isContacted && !isAccepted ? 'var(--gray-200)' : 'var(--blue)',
+                        color: isContacted && !isAccepted ? 'var(--gray-500)' : '#fff',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 11, fontWeight: 700,
+                      }}>
+                        {i + 1}
+                      </div>
+
+                      {/* Avatar */}
+                      <div style={{
+                        width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                        background: '#0F4FA8', color: '#fff',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontWeight: 700, fontSize: 12,
+                      }}>
+                        {initials(profile?.name)}
+                      </div>
+
+                      {/* Name + stats */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {profile?.name || uid}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--gray-400)' }}>
+                          {w?.rating != null
+                            ? `★ ${w.rating.toFixed(1)} · ${w.completedJobCount ?? 0} jobs`
+                            : 'New worker — no rating yet'}
+                          {w?.serviceRadiusKm != null && ` · ${w.serviceRadiusKm} km radius`}
+                        </div>
+                      </div>
+
+                      {/* Status badge */}
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, padding: '3px 8px',
+                        borderRadius: 999, background: badgeBg, color: badgeColor,
+                        flexShrink: 0,
+                      }}>
+                        {badge}
+                      </span>
+                    </div>
+                  )
+                })}
+
+                {/* Offer expiry countdown if there's an active offer */}
+                {job.offerExpiry && (job.simultaneousOfferWorkerIds || []).length > 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--gray-400)', paddingLeft: 4 }}>
+                    Offer expires: {fmtTs(job.offerExpiry)}
                   </div>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{job.disputeReason}</div>
-                </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Dispute panel — shown whenever the job has a disputeId ── */}
+          {job.disputeId && (
+            <div className="card" style={{
+              marginBottom: 'var(--sp-4)',
+              borderLeft: `4px solid ${disputeIsOpen ? 'var(--red)' : 'var(--green)'}`,
+            }}>
+
+              {/* Header */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 'var(--sp-4)' }}>
+                <h2 style={{
+                  fontWeight: 700, fontSize: 16, margin: 0,
+                  color: disputeIsOpen ? 'var(--red)' : 'var(--green)',
+                }}>
+                  {disputeIsOpen ? 'Active Dispute' : 'Dispute'}
+                </h2>
+                {dispute?.status === 'RESOLVED' && (
+                  <span style={{
+                    fontSize: 12, fontWeight: 700, padding: '2px 10px', borderRadius: 999,
+                    background: '#F0FDF4', color: 'var(--green)',
+                  }}>
+                    RESOLVED
+                  </span>
+                )}
+                {dispute?.status === 'OPEN' && (
+                  <span style={{
+                    fontSize: 12, fontWeight: 700, padding: '2px 10px', borderRadius: 999,
+                    background: '#FEF2F2', color: 'var(--red)',
+                  }}>
+                    OPEN
+                  </span>
+                )}
+              </div>
+
+              {disputeLoading && (
+                <p style={{ fontSize: 13, color: 'var(--gray-400)' }}>Loading dispute details…</p>
               )}
 
-              {job.disputeDescription && (
-                <div style={{ marginBottom: 'var(--sp-4)' }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: .5, color: 'var(--gray-400)', marginBottom: 6 }}>
-                    Requester Statement
-                  </div>
-                  <div style={{ fontSize: 14, color: 'var(--gray-600)', lineHeight: 1.5, background: 'var(--gray-50)', borderRadius: 6, padding: 'var(--sp-3)' }}>
-                    "{job.disputeDescription}"
-                  </div>
-                </div>
+              {!disputeLoading && dispute && (
+                <>
+                  {/* Opened / resolved timestamps */}
+                  <p style={{ fontSize: 12, color: 'var(--gray-400)', marginBottom: 'var(--sp-4)', marginTop: 0 }}>
+                    Opened: {fmtTs(dispute.openedAt)}
+                    {dispute.resolvedAt && ` · Resolved: ${fmtTs(dispute.resolvedAt)}`}
+                  </p>
+
+                  {/* Evidence gallery */}
+                  {dispute.evidenceUrls?.length > 0 && (
+                    <section style={{ marginBottom: 'var(--sp-5)' }}>
+                      <div style={{
+                        fontSize: 12, fontWeight: 700, textTransform: 'uppercase',
+                        letterSpacing: .5, color: 'var(--gray-400)', marginBottom: 'var(--sp-3)',
+                      }}>
+                        Evidence ({dispute.evidenceUrls.length} file{dispute.evidenceUrls.length !== 1 ? 's' : ''})
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 10 }}>
+                        {dispute.evidenceUrls.map((url, i) => (
+                          <EvidenceItem key={i} url={url} disputeId={job.disputeId} onZoom={setLightboxUrl} />
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {/* Statements */}
+                  <section style={{ marginBottom: 'var(--sp-5)' }}>
+                    <div style={{
+                      fontSize: 12, fontWeight: 700, textTransform: 'uppercase',
+                      letterSpacing: .5, color: 'var(--gray-400)', marginBottom: 'var(--sp-3)',
+                    }}>
+                      Statements
+                    </div>
+                    <StatementCard
+                      label="Requester"
+                      borderColor="var(--blue)"
+                      text={dispute.requesterStatement}
+                    />
+                    <StatementCard
+                      label="Worker"
+                      borderColor="#7C3AED"
+                      text={dispute.workerStatement}
+                      style={{ marginTop: 'var(--sp-3)' }}
+                    />
+                  </section>
+
+                  {/* Resolved details — read-only */}
+                  {dispute.status === 'RESOLVED' && (
+                    <section style={{
+                      background: '#F0FDF4', borderRadius: 8,
+                      padding: 'var(--sp-4)', marginBottom: 'var(--sp-2)',
+                    }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--green)', marginBottom: 6 }}>
+                        Resolution: {dispute.resolution}
+                        {dispute.resolution === 'SPLIT' && ` — ${dispute.splitPercentageToWorker}% to Worker`}
+                      </div>
+                      {dispute.adminNotes && (
+                        <p style={{ fontSize: 13, color: 'var(--gray-600)', lineHeight: 1.5, margin: 0 }}>
+                          {dispute.adminNotes}
+                        </p>
+                      )}
+                      {dispute.resolvedByAdminUid && (
+                        <p style={{ fontSize: 12, color: 'var(--gray-400)', margin: '6px 0 0' }}>
+                          Resolved by: {dispute.resolvedByAdminUid} · {fmtTs(dispute.resolvedAt)}
+                        </p>
+                      )}
+                    </section>
+                  )}
+
+                  {/* Resolution form — only when dispute is OPEN */}
+                  {dispute.status === 'OPEN' && (
+                    <section style={{ borderTop: '1px solid var(--gray-200)', paddingTop: 'var(--sp-4)' }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 'var(--sp-3)' }}>
+                        Resolution
+                      </div>
+
+                      {/* Radio group */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 'var(--sp-4)' }}>
+                        {[
+                          { val: 'RELEASED', label: 'Release to Worker' },
+                          { val: 'REFUNDED', label: 'Refund Requester' },
+                          { val: 'SPLIT',    label: 'Split payment' },
+                        ].map(opt => (
+                          <label key={opt.val} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 14 }}>
+                            <input type="radio" name="resolution" value={opt.val}
+                              checked={resolution === opt.val} onChange={() => setResolution(opt.val)} />
+                            {opt.label}
+                          </label>
+                        ))}
+                      </div>
+
+                      {/* Split slider — only visible when SPLIT is selected */}
+                      {resolution === 'SPLIT' && (
+                        <div style={{
+                          marginBottom: 'var(--sp-4)', background: 'var(--gray-50)',
+                          borderRadius: 8, padding: 'var(--sp-3)',
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--gray-400)', marginBottom: 4 }}>
+                            <span>0% to Worker</span>
+                            <span>100% to Worker</span>
+                          </div>
+                          <input type="range" min={0} max={100} value={splitPct}
+                            onChange={e => setSplitPct(Number(e.target.value))}
+                            style={{ width: '100%', accentColor: 'var(--blue)' }} />
+                          <div style={{ textAlign: 'center', fontWeight: 700, fontSize: 15, margin: '8px 0 6px' }}>
+                            Worker share: {splitPct}%
+                          </div>
+                          {/* Live amount preview */}
+                          {workerSplitCAD != null && requesterRefundCAD != null && (
+                            <div style={{
+                              display: 'flex', justifyContent: 'space-between',
+                              fontSize: 13, fontWeight: 600, marginTop: 4,
+                            }}>
+                              <span style={{ color: 'var(--green)' }}>
+                                Worker receives: {fmtCAD(workerSplitCAD)}
+                              </span>
+                              <span style={{ color: 'var(--gray-600)' }}>
+                                Requester refund: {fmtCAD(requesterRefundCAD)}
+                              </span>
+                            </div>
+                          )}
+                          <p style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 6, marginBottom: 0 }}>
+                            HST ({fmtCAD(job.hstAmountCAD)}) is always included in the Worker amount.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Admin resolution notes */}
+                      <div className="field" style={{ marginBottom: 'var(--sp-3)' }}>
+                        <label className="label">
+                          Resolution notes
+                          <span style={{ color: 'var(--gray-400)', fontWeight: 400, marginLeft: 6 }}>
+                            (required, min 20 chars)
+                          </span>
+                        </label>
+                        <textarea className="input" rows={3} maxLength={1000}
+                          placeholder="Document the basis for your resolution decision…"
+                          value={resolveNotes}
+                          onChange={e => { setResolveNotes(e.target.value); setNotesError(null) }} />
+                        {notesError && (
+                          <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 4 }}>
+                            {notesError}
+                          </div>
+                        )}
+                      </div>
+
+                      <button className="btn btn-primary btn-full"
+                        disabled={actionPending}
+                        onClick={handleResolveClick}>
+                        Resolve Dispute
+                      </button>
+                    </section>
+                  )}
+                </>
               )}
 
-              {job.disputeWorkerNotes && (
-                <div style={{ marginBottom: 'var(--sp-5)' }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: .5, color: 'var(--gray-400)', marginBottom: 6 }}>
-                    Worker Notes
-                  </div>
-                  <div style={{ fontSize: 14, color: 'var(--gray-600)', lineHeight: 1.5, background: 'var(--gray-50)', borderRadius: 6, padding: 'var(--sp-3)' }}>
-                    "{job.disputeWorkerNotes}"
-                  </div>
-                </div>
-              )}
-
-              {job.disputeInitiatedAt && (
-                <div style={{ fontSize: 12, color: 'var(--gray-400)', marginBottom: 'var(--sp-4)' }}>
+              {/* Show basic info from job if dispute doc hasn't loaded yet */}
+              {!disputeLoading && !dispute && job.disputeInitiatedAt && (
+                <div style={{ fontSize: 13, color: 'var(--gray-400)' }}>
                   Opened: {fmtTs(job.disputeInitiatedAt)}
                 </div>
               )}
-
-              {/* Resolution form */}
-              <div style={{ borderTop: '1px solid var(--gray-200)', paddingTop: 'var(--sp-4)' }}>
-                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 'var(--sp-3)' }}>Resolution</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 'var(--sp-3)' }}>
-                  {[
-                    { val: 'release', label: 'Release payment to Worker' },
-                    { val: 'refund',  label: 'Refund to Requester' },
-                    { val: 'split',   label: 'Split payment (wires in P2-01)' },
-                  ].map(opt => (
-                    <label key={opt.val} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 14 }}>
-                      <input type="radio" name="resolution" value={opt.val}
-                        checked={resolution === opt.val} onChange={() => setResolution(opt.val)} />
-                      {opt.label}
-                    </label>
-                  ))}
-                </div>
-
-                {resolution === 'split' && (
-                  <div style={{ marginBottom: 'var(--sp-3)' }}>
-                    <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 4 }}>
-                      Worker share: <strong>{splitPct}%</strong> · Requester refund: <strong>{100 - splitPct}%</strong>
-                    </label>
-                    <input type="range" min={0} max={100} value={splitPct}
-                      onChange={e => setSplitPct(Number(e.target.value))} style={{ width: '100%' }} />
-                    {job.workerPayoutCAD != null && job.totalAmountCAD != null && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--gray-400)', marginTop: 4 }}>
-                        <span>Worker: {fmtCAD(job.workerPayoutCAD * splitPct / 100)}</span>
-                        <span>Refund: {fmtCAD(job.totalAmountCAD * (100 - splitPct) / 100)}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="field">
-                  <label className="label">Admin resolution notes</label>
-                  <textarea className="input" rows={3} maxLength={1000}
-                    placeholder="Document the basis for your resolution decision…"
-                    value={resolveNotes} onChange={e => setResolveNotes(e.target.value)} />
-                </div>
-
-                <button className="btn btn-primary btn-full"
-                  disabled={resolution === 'split' || actionPending}
-                  onClick={() => setResolveConfirmOpen(true)}>
-                  {resolution === 'split' ? 'Split — wires in P2-01' : 'Resolve Dispute'}
-                </button>
-              </div>
             </div>
           )}
         </div>
@@ -535,7 +812,7 @@ export default function AdminJobDetail() {
           </div>
 
           {/* Admin Actions */}
-          <div className="card" style={{ marginBottom: 'var(--sp-4)' }}>
+          <div className="card">
             <h2 style={{ fontWeight: 700, fontSize: 16, marginBottom: 'var(--sp-4)' }}>Admin Actions</h2>
 
             <div style={{ marginBottom: 'var(--sp-4)' }}>
@@ -566,33 +843,12 @@ export default function AdminJobDetail() {
               </button>
             </div>
           </div>
-
-          {/* Admin Notes — local only until P2-01 */}
-          <div className="card">
-            <h2 style={{ fontWeight: 700, fontSize: 16, marginBottom: 'var(--sp-3)' }}>Admin Notes</h2>
-            <p style={{ fontSize: 11, color: 'var(--gray-400)', marginBottom: 'var(--sp-2)' }}>
-              Local only — notes API wires in P2-01
-            </p>
-            <textarea className="input" rows={4}
-              placeholder="Internal notes visible only to admin team…"
-              value={adminNotes}
-              onChange={e => { setAdminNotes(e.target.value); setNotesSaved(false) }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'var(--sp-2)' }}>
-              {notesSaved && (
-                <span style={{ fontSize: 12, color: 'var(--green)', fontWeight: 600 }}>Saved</span>
-              )}
-              <button className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }}
-                onClick={saveNotes} disabled={!adminNotes.trim()}>
-                Save Note
-              </button>
-            </div>
-          </div>
         </div>
       </div>
 
       {/* ── Modals ─────────────────────────────────────────────────────── */}
 
-      {/* Override status modal — requires a mandatory audit reason */}
+      {/* Override status modal */}
       <Modal isOpen={overrideOpen} onClose={() => setOverrideOpen(false)}
         title="Override Job Status" size="sm"
         footer={
@@ -676,18 +932,113 @@ export default function AdminJobDetail() {
       >
         <p style={{ fontSize: 14, color: 'var(--gray-600)', lineHeight: 1.5 }}>
           Resolve dispute with: <strong>
-            {resolution === 'release' ? 'Release to Worker'
-              : resolution === 'refund' ? 'Full Refund'
+            {resolution === 'RELEASED' ? 'Release to Worker'
+              : resolution === 'REFUNDED' ? 'Full Refund to Requester'
               : `Split — Worker ${splitPct}% / Requester ${100 - splitPct}%`}
-          </strong>.<br /><br />
-          This will close the dispute and trigger the appropriate payment action.
+          </strong>.
         </p>
+        {resolution === 'SPLIT' && workerSplitCAD != null && (
+          <p style={{ fontSize: 13, color: 'var(--gray-600)', marginTop: 8, lineHeight: 1.5 }}>
+            Worker receives <strong>{fmtCAD(workerSplitCAD)}</strong> ·
+            Requester refund <strong>{fmtCAD(requesterRefundCAD)}</strong>
+          </p>
+        )}
+        <p style={{ fontSize: 13, color: 'var(--gray-400)', marginTop: 8, marginBottom: 0 }}>
+          This action is irreversible and will trigger the appropriate payment action.
+        </p>
+      </Modal>
+
+      {/* Evidence lightbox */}
+      <Modal isOpen={!!lightboxUrl} onClose={() => setLightboxUrl(null)}
+        title="Evidence" size="lg">
+        {lightboxUrl && (
+          <img src={lightboxUrl} alt="Evidence" style={{
+            width: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: 4,
+          }} />
+        )}
       </Modal>
     </div>
   )
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
+
+/**
+ * Single evidence item: image thumbnail (click to zoom) or PDF download link.
+ * The party label (Requester / Worker) is decoded from the Firebase Storage URL path.
+ */
+function EvidenceItem({ url, disputeId, onZoom }) {
+  const party = url.includes('%2Frequester%2F') ? 'Requester'
+              : url.includes('%2Fworker%2F')    ? 'Worker' : null
+  const isPdf = url.split('?')[0].toLowerCase().endsWith('.pdf')
+
+  return (
+    <div style={{ position: 'relative' }}>
+      {isPdf ? (
+        <a href={url} target="_blank" rel="noreferrer" style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          justifyContent: 'center', height: 80, background: '#FFF7ED',
+          borderRadius: 6, textDecoration: 'none', fontSize: 11,
+          color: 'var(--gray-600)', gap: 4,
+          border: '1px solid var(--gray-200)', padding: 4,
+        }}>
+          <span style={{ fontSize: 22 }}>📄</span>
+          <span style={{ fontWeight: 600 }}>PDF</span>
+        </a>
+      ) : (
+        <img src={url} alt="Evidence"
+          onClick={() => onZoom(url)}
+          style={{
+            width: '100%', height: 80, objectFit: 'cover',
+            borderRadius: 6, cursor: 'pointer',
+            border: '1px solid var(--gray-200)',
+          }} />
+      )}
+      {party && (
+        <span style={{
+          position: 'absolute', bottom: 4, left: 4,
+          fontSize: 9, fontWeight: 700,
+          background: party === 'Requester' ? 'var(--blue)' : '#7C3AED',
+          color: '#fff', padding: '1px 5px', borderRadius: 999,
+        }}>
+          {party}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Statement card with a coloured left border identifying the party.
+ * Blue for Requester, purple for Worker.
+ */
+function StatementCard({ label, borderColor, text, style }) {
+  return (
+    <div style={{
+      borderLeft: `4px solid ${borderColor}`,
+      background: 'var(--gray-50)',
+      borderRadius: '0 6px 6px 0',
+      padding: 'var(--sp-3)',
+      ...style,
+    }}>
+      <div style={{
+        fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+        letterSpacing: .5, color: 'var(--gray-400)', marginBottom: 6,
+      }}>
+        {label}
+      </div>
+      {text ? (
+        <p style={{ fontSize: 14, color: 'var(--gray-600)', lineHeight: 1.5, margin: 0 }}>
+          "{text}"
+        </p>
+      ) : (
+        <p style={{ fontSize: 13, color: 'var(--gray-400)', fontStyle: 'italic', margin: 0 }}>
+          No statement submitted.
+        </p>
+      )}
+    </div>
+  )
+}
 
 /**
  * Small badge showing an account's lifecycle status (active / suspended / banned).
