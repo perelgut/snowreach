@@ -4399,3 +4399,22 @@ formData.append('file', file)   // was: 'photo'
 ```
 
 Committed as `102cc4d`. `StorageControllerTest` already uses `"file"` in its `testPhoto()` helper — the test was correct, only the production API client was wrong.
+
+---
+
+## 2026-04-19 — Hotfix: StorageService real-GCS calls fail in emulator mode
+
+### Problem found during emulator e2e testing (Step 5-F, second attempt)
+
+After fixing the field name, the upload still failed with "Photo upload failed — please try again". Root cause: `StorageService.uploadJobPhoto()` calls `StorageClient.getInstance(firebaseApp).bucket(storageBucket).getStorage().create(...)` which targets real Google Cloud Storage. The Admin SDK does have a `FIREBASE_STORAGE_EMULATOR_HOST` env var mechanism, but it must be set as an OS environment variable before the JVM starts — setting it via `System.setProperty()` at runtime does not work (same pattern as `FIRESTORE_EMULATOR_HOST`). In emulator mode the fake `"emulator-local-dev"` credential is rejected by real GCS, causing a 500.
+
+### Fix
+
+Added `useEmulator` flag (injected from `${yosnowmow.firebase.use-emulator:false}`) to `StorageService`. In emulator mode, all three upload methods (`uploadJobPhoto`, `uploadDisputeEvidence`, `uploadInsuranceDoc`) run validation (MIME type, file size) then short-circuit and return a stable fake URL instead of calling GCS:
+```
+https://emulator.fake/storage/jobs/{jobId}/photos/{uuid}.png
+```
+
+This unblocks local testing. The fake URL is recorded in the Firestore job document's `completionImageIds` array exactly as a real URL would be — the downstream flow (mark complete, approve) is unaffected.
+
+Committed as `1a7834f`. All 168 tests still pass.
