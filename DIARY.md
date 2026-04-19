@@ -4418,3 +4418,28 @@ https://emulator.fake/storage/jobs/{jobId}/photos/{uuid}.png
 This unblocks local testing. The fake URL is recorded in the Firestore job document's `completionImageIds` array exactly as a real URL would be — the downstream flow (mark complete, approve) is unaffected.
 
 Committed as `1a7834f`. All 168 tests still pass.
+
+---
+
+## 2026-04-19 — Hotfix: Spring Boot multipart size limit (1 MB default)
+
+### Problem found during emulator e2e testing (Step 5-F, third attempt)
+
+Even after the field name fix and the storage emulator short-circuit, a 2 MB PNG still triggered "Photo upload failed". Root cause: Spring Boot's default `spring.servlet.multipart.max-file-size` is **1 MB**. The 2 MB file was rejected by Spring's `StandardMultipartHttpServletRequest` before the request even reached `StorageController` — no application code ran at all. This also explains why neither previous fix had any effect.
+
+### Fix
+
+Added to `application.yml` (base config, all profiles):
+```yaml
+spring:
+  servlet:
+    multipart:
+      max-file-size: 20MB    # largest upload: dispute evidence (spec: 20 MB)
+      max-request-size: 22MB # file + form fields headroom
+```
+
+Set to 20 MB to match the largest file the spec allows (dispute evidence). Completion photos are capped at 10 MB and insurance docs at 20 MB — all enforced by `StorageService` validation after the multipart layer accepts the bytes.
+
+Also noted: "CTRL-SHIFT-R" is a browser hard-refresh, not a backend restart. The backend (`./mvnw spring-boot:run`) must be stopped (Ctrl+C) and restarted in its terminal for any Java changes to take effect.
+
+Committed as `a6055ac`.
