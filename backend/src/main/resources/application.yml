@@ -8,11 +8,16 @@ spring:
     name: yosnowmow-api
   profiles:
     active: ${SPRING_PROFILE:dev}
+  servlet:
+    multipart:
+      max-file-size: 20MB      # largest upload is dispute evidence (spec: 20 MB)
+      max-request-size: 22MB   # file + form fields headroom
 
 server:
   port: 8080
 
 # Actuator — expose health endpoint only (Cloud Run liveness/readiness probe)
+# Custom indicators: firebase (Firestore ping) and quartz (scheduler state) — P2-08
 management:
   endpoints:
     web:
@@ -21,6 +26,7 @@ management:
   endpoint:
     health:
       show-details: always
+      show-components: always   # surfaces firebase + quartz sub-components in /api/health
 
 # ── YoSnowMow application config ────────────────────────────
 # All sensitive values loaded from environment variables.
@@ -62,3 +68,11 @@ yosnowmow:
 
   maps:
     api-key: ${MAPS_API_KEY:placeholder-set-in-P1-07}
+
+  certn:
+    # Certn background check API (P3-01).
+    # Production values injected from GCP Secret Manager via Cloud Run env vars.
+    api-key:        ${CERTN_API_KEY:placeholder-set-in-P3-01}
+    # Use the sandbox URL for dev/test; override to https://api.certn.co/hp/v1 in prod.
+    api-url:        ${CERTN_API_URL:https://api-sandbox.certn.co/hp/v1}
+    webhook-secret: ${CERTN_WEBHOOK_SECRET:placeholder-set-in-P3-01}
