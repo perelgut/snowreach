@@ -69,9 +69,11 @@ export function AuthProvider({ children }) {
   const signUp = (email, password) =>
     createUserWithEmailAndPassword(auth, email, password)
 
-  /** Re-fetches the Firestore profile for the current user. */
+  /** Re-fetches the Firestore profile and force-refreshes the Firebase ID token
+   *  so that custom claims (roles) set by the backend are picked up immediately. */
   const refreshProfile = async () => {
     if (auth.currentUser) {
+      await auth.currentUser.getIdToken(true)
       const snap = await getDoc(doc(db, 'users', auth.currentUser.uid))
       setUserProfile(snap.exists() ? snap.data() : null)
     }
