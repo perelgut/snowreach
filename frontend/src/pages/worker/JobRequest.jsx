@@ -49,6 +49,15 @@ export default function JobRequest() {
     }, err => console.error('[JobRequest] jobOffers listener error:', err))
   }, [uid])
 
+  // ── Real-time listener: all POSTED jobs (direct browse) ──────────────────
+  const [postedJobs, setPostedJobs] = useState([])
+  useEffect(() => {
+    const q = query(collection(db, 'jobs'), where('status', '==', 'POSTED'))
+    return onSnapshot(q, snap => {
+      setPostedJobs(snap.docs.map(d => ({ ...d.data(), jobId: d.id })))
+    }, err => console.error('[JobRequest] posted jobs listener error:', err))
+  }, [])
+
   // ── Real-time listener: notification feed ─────────────────────────────────
   useEffect(() => {
     if (!uid) return
@@ -163,7 +172,10 @@ export default function JobRequest() {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  const isEmpty = newOpportunities.length === 0 && activeOffers.length === 0
+  // POSTED jobs not already offered on (direct browse, no notification needed)
+  const browsableJobs = postedJobs.filter(j => !offerJobIds.has(j.jobId))
+
+  const isEmpty = newOpportunities.length === 0 && activeOffers.length === 0 && browsableJobs.length === 0
 
   return (
     <div style={{ maxWidth: 520, margin: '0 auto' }}>
@@ -211,6 +223,45 @@ export default function JobRequest() {
               />
             )
           })}
+        </section>
+      )}
+
+      {/* ── Browse available POSTED jobs (direct Firestore query) ─────────── */}
+      {browsableJobs.length > 0 && (
+        <section style={{ marginBottom: 'var(--sp-6)' }}>
+          <h2 style={{ fontSize: 14, fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 'var(--sp-3)' }}>
+            Available Jobs
+          </h2>
+          {browsableJobs.map(job => (
+            <div key={job.jobId} className="card" style={{ marginBottom: 'var(--sp-3)', padding: 'var(--sp-4)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--sp-2)' }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{job.propertyAddress?.fullText ?? 'Address pending'}</div>
+                  <div style={{ fontSize: 13, color: 'var(--gray-500)', marginTop: 4 }}>
+                    {job.scope?.join(', ') ?? '—'}
+                    {job.postedPriceCents ? ` · $${(job.postedPriceCents / 100).toFixed(2)} posted` : ''}
+                  </div>
+                </div>
+              </div>
+              {job.notesForWorker && (
+                <p style={{ fontSize: 13, color: 'var(--gray-600)', marginBottom: 'var(--sp-3)' }}>{job.notesForWorker}</p>
+              )}
+              <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+                <button className="btn btn-primary" disabled={submitting === job.jobId}
+                  onClick={() => openCounterModal(job.jobId, job.postedPriceCents ?? 0, 'new')}
+                  style={{ flex: 1 }}>
+                  Make Offer
+                </button>
+                {job.postedPriceCents && (
+                  <button className="btn btn-secondary" disabled={submitting === job.jobId}
+                    onClick={() => handleAccept(job.jobId, job.postedPriceCents)}
+                    style={{ flex: 1 }}>
+                    Accept Price
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
         </section>
       )}
 
