@@ -164,14 +164,48 @@ public class OfferService {
                 firestore.collection(JOB_OFFERS_COLLECTION).document(offerId).update(updates).get();
             }
 
-            // Move job to NEGOTIATING once the first offer arrives.
-            if ("POSTED".equals(job.getStatus())) {
-                jobService.transitionStatus(jobId, "NEGOTIATING", workerId, null);
+            // When a Worker accepts, the deal is done — auto-transition to AGREED.
+            // The agreed price is: (a) the Requester's last counter, (b) the Worker's
+            // own previous counter, or (c) the original posted price, in that order.
+            if ("accept".equals(req.getAction())) {
+                DocumentSnapshot snap = firestore.collection(JOB_OFFERS_COLLECTION)
+                        .document(offerId).get().get();
+                JobOffer savedOffer = snap.toObject(JobOffer.class);
+
+                int agreedCents = 0;
+                if (savedOffer != null && savedOffer.getRequesterPriceCents() != null) {
+                    agreedCents = savedOffer.getRequesterPriceCents(); // Worker accepts Requester's counter
+                } else if (savedOffer != null && savedOffer.getWorkerPriceCents() != null) {
+                    agreedCents = savedOffer.getWorkerPriceCents();    // Worker accepting at their own price
+                } else if (job.getPostedPriceCents() != null) {
+                    agreedCents = job.getPostedPriceCents();           // Worker accepts posted price
+                }
+
+                Map<String, Object> pricingFields = computePricing(job, workerId, agreedCents);
+                Map<String, Object> jobUpdates = new HashMap<>(pricingFields);
+                jobUpdates.put("agreedPriceCents", agreedCents);
+                jobUpdates.put("agreedWorkerId",   workerId);
+                jobUpdates.put("workerId",         workerId);
+                jobUpdates.put("agreedAt",         now);
+
+                jobService.transitionStatus(jobId, "AGREED", workerId, jobUpdates);
+
+                notificationService.notifyWorkerOfferAgreed(workerId, jobId, agreedCents);
+                notificationService.notifyRequesterReadyForEscrow(job.getRequesterId(), jobId, agreedCents);
+
+                log.info("Job {} auto-AGREED by Worker accept: worker={} agreedCents={}",
+                        jobId, workerId, agreedCents);
+
+            } else {
+                // Counter / photo_request / withdraw — move to NEGOTIATING on first offer.
+                if ("POSTED".equals(job.getStatus())) {
+                    jobService.transitionStatus(jobId, "NEGOTIATING", workerId, null);
+                }
+                notificationService.notifyRequesterOfferReceived(job.getRequesterId(), jobId, workerId);
             }
 
             auditLogService.write(workerId, "WORKER_OFFER_" + req.getAction().toUpperCase(),
                     "job", jobId, null, req);
-            notificationService.notifyRequesterOfferReceived(job.getRequesterId(), jobId, workerId);
 
             DocumentSnapshot result = firestore.collection(JOB_OFFERS_COLLECTION)
                     .document(offerId).get().get();

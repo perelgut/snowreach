@@ -4621,3 +4621,80 @@ Added a `labelOverrides` prop to `StatusPill` so callers can substitute display 
 - **Default to home address:** When `userProfile.homeAddressText` exists, `useHomeAddr` defaults to `true` so the common case (posting for your own home) is one fewer click.
 - **Jobs without coords shown anyway:** Geocoding is async; a job might briefly have no `propertyCoords`. Showing it is better than silently hiding it from the worker.
 - **Worker distance display on opportunity cards:** Not implemented for `newOpportunities` (those come from notifications which don't include full coords); only on the direct `browsableJobs` section where Firestore data is available.
+
+---
+
+## 2026-04-20 — Beta Test Step 1 Smoke Test: Four Bugs Found and Fixed
+
+### Context
+
+Beta test Step 1 (smoke test end-to-end) revealed four defects. User also clarified a business rule about Worker acceptance.
+
+---
+
+### Bug 1 — Admin-only user lands on wrong portal on first load
+
+**Symptom:** After signing in as perelgut@gmail.com (admin-only role), the screen showed "Worker Portal" instead of the Admin Panel. Manually navigating to yosnowmow.com/admin worked correctly.
+
+**Root cause:** `App.jsx` had a static root redirect: `<Route path="/" element={<Navigate to="/requester" replace />} />`. This fires immediately, before Firebase Auth resolves the user's session and Firestore loads the user profile. The `ProtectedRoute` only checks authentication (not roles), so an admin-only user was passed through to `RequesterLayout`. A similar catch-all `<Route path="*" ...>` had the same issue.
+
+**Fix — `frontend/src/App.jsx`:**
+- Added `DefaultRedirect` component that waits for `loading` to clear and `userProfile` to load before choosing a destination.
+- Logic: admin → `/admin`; worker-only → `/worker`; otherwise → `/requester`.
+- Replaced both the root and catch-all `<Navigate>` elements with `<DefaultRedirect />`.
+
+---
+
+### Bug 2 — Admin sidebar nav links not switching tabs
+
+**Symptom:** Clicking "All Jobs", "Users", "Disputes" in the admin sidebar appeared to do nothing — the tab content did not change.
+
+**Root cause:** `Dashboard.jsx` initialises `activeTab` with `useState(propTab || 'overview')`. The `/admin`, `/admin/jobs`, `/admin/users`, `/admin/disputes` routes all render `<AdminDashboard>` (same component type at the same tree level). React reconciles rather than remounts the component, so `useState` is not re-initialised when navigating between tab routes. The `propTab` prop updated but `activeTab` state remained stale.
+
+**Fix — `frontend/src/pages/admin/Dashboard.jsx`:**
+- Added `useEffect(() => { setActiveTab(propTab || 'overview') }, [propTab])` immediately after the `useState` declaration, so `activeTab` tracks the URL-driven prop on every navigation.
+
+---
+
+### Bug 3 — Worker accepting a job leaves Requester stuck on "Negotiating"
+
+**Symptom:** Worker submitted an offer (accepting the posted price). Requester's Job Status page continued to show "Negotiating" with no action available.
+
+**Root causes (two):**
+
+1. **Backend — wrong transition:** `OfferService.workerSubmitOffer` only moved the job to `NEGOTIATING` (first offer) or left it there (subsequent offers). When a Worker submitted `action: "accept"`, the offer's status became `ACCEPTED` with `lastMoveBy: "worker"`, but the job never moved to `AGREED`. The Requester had no way to proceed.
+
+2. **Frontend — no real-time updates:** `JobStatus.jsx` loaded the job once on mount and had no mechanism to detect changes made by the Worker. Even if the backend was correct, the Requester's page would be stale until a manual refresh.
+
+**Business rule clarified by user:** "If a worker accepts the job, it's a deal and now up to Requester to move funds to Escrow." This means Worker acceptance must auto-transition the job to `AGREED` — no further Requester confirmation is needed before payment.
+
+**Fix 3A — `backend/.../service/OfferService.java`:**
+- In `workerSubmitOffer`, when `action.equals("accept")`, the service now:
+  1. Re-reads the saved offer document to determine the agreed price (Requester's last counter → Worker's last counter → posted price, in that order).
+  2. Calls `computePricing()` to set all financial fields (tierPriceCAD, hstAmountCAD, totalAmountCAD, commissionRateApplied, workerPayoutCAD).
+  3. Calls `transitionStatus(jobId, "AGREED", ...)` with the pricing fields and agreedPriceCents, agreedWorkerId, workerId, agreedAt.
+  4. Sends notifications to both parties.
+- For non-accept worker actions (counter, photo_request, withdraw), the old `NEGOTIATING` transition and requester notification are preserved.
+
+**Fix 3B — `frontend/src/pages/requester/JobStatus.jsx`:**
+- Converted `refreshJob` to `useCallback` so it can be used as a stable dependency.
+- Added a polling `useEffect` that calls `refreshJob()` every 5 seconds while `job.status` is `POSTED` or `NEGOTIATING`. The interval is cleared when the status changes to anything else (AGREED, CANCELLED, etc.) and when the component unmounts.
+
+---
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `frontend/src/App.jsx` | Added `DefaultRedirect`; replaced root + catch-all redirects |
+| `frontend/src/pages/admin/Dashboard.jsx` | Added `useEffect` to sync `activeTab` with `propTab` |
+| `backend/.../service/OfferService.java` | Worker accept → auto-AGREED with pricing computation |
+| `frontend/src/pages/requester/JobStatus.jsx` | `useCallback` on refreshJob; 5-second polling in POSTED/NEGOTIATING |
+
+---
+
+### Remaining beta test items
+
+- Step 1: re-verify all four smoke test items after deploy
+- Step 2: add beta banner (payments not live) — approved by user
+- Steps 3–5: tester recruitment, feedback form, admin coverage plan

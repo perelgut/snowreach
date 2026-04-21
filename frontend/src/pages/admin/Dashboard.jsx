@@ -33,6 +33,13 @@ export default function AdminDashboard({ tab: propTab }) {
   const navigate = useNavigate()
 
   const [activeTab, setActiveTab] = useState(propTab || 'overview')
+
+  // React reconciles rather than remounts when navigating between tab routes
+  // (same component type at the same tree depth), so useState is not re-initialized.
+  // Sync activeTab whenever the URL-driven propTab changes.
+  useEffect(() => {
+    setActiveTab(propTab || 'overview')
+  }, [propTab])
   const [disputes,         setDisputes]         = useState([])
   const [disputesLoading,  setDisputesLoading]  = useState(false)
   const [disputesError,    setDisputesError]    = useState(null)

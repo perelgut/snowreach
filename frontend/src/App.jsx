@@ -24,6 +24,21 @@ import Login from './pages/auth/Login'
 import Signup from './pages/auth/Signup'
 
 /**
+ * Role-aware default redirect. Waits for auth to resolve before choosing
+ * a destination — prevents an admin landing on /requester just because
+ * the root redirect fired before the token was ready.
+ */
+function DefaultRedirect() {
+  const { currentUser, userProfile, loading } = useAuth()
+  if (loading) return null
+  if (!currentUser) return <Navigate to="/login" replace />
+  const roles = userProfile?.roles ?? []
+  if (roles.includes('admin'))                                   return <Navigate to="/admin"     replace />
+  if (roles.includes('worker') && !roles.includes('requester')) return <Navigate to="/worker"    replace />
+  return <Navigate to="/requester" replace />
+}
+
+/**
  * ProtectedRoute — renders its children only when the user is signed in.
  *
  * While the initial auth state is loading, renders nothing (prevents a
@@ -44,7 +59,7 @@ export default function App() {
   return (
     <>
       <Routes>
-        <Route path="/" element={<Navigate to="/requester" replace />} />
+        <Route path="/" element={<DefaultRedirect />} />
 
         {/* All requester / worker / admin routes require sign-in */}
         <Route element={<ProtectedRoute />}>
@@ -78,7 +93,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
 
-        <Route path="*" element={<Navigate to="/requester" replace />} />
+        <Route path="*" element={<DefaultRedirect />} />
       </Routes>
     </>
   )

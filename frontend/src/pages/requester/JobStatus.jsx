@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   getJob, cancelJob, disputeJob,
@@ -135,14 +135,23 @@ export default function JobStatus() {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  async function refreshJob() {
+  const refreshJob = useCallback(async () => {
     const [updatedJob, updatedOffers] = await Promise.all([
       getJob(id),
       getOffersForJob(id).catch(() => null),
     ])
     setJob(updatedJob)
     if (updatedOffers) setOffers(updatedOffers)
-  }
+  }, [id])
+
+  // Poll every 5 s while the job is awaiting a Worker action, so the Requester
+  // sees the state change (POSTED → NEGOTIATING → AGREED) without a manual refresh.
+  useEffect(() => {
+    if (!job?.status) return
+    if (!['POSTED', 'NEGOTIATING'].includes(job.status)) return
+    const interval = setInterval(refreshJob, 5000)
+    return () => clearInterval(interval)
+  }, [job?.status, refreshJob])
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
