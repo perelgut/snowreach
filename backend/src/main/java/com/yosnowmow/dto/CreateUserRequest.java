@@ -49,6 +49,12 @@ public class CreateUserRequest {
     /** Optional phone number (E.164 format preferred, e.g. +16135550100). */
     private String phoneNumber;
 
+    /**
+     * Requester's home address (full text, e.g. "123 Main St, Toronto, ON M5V 3A8").
+     * Optional — stored in the user document for "use home address" on job post.
+     */
+    private String homeAddressText;
+
     // ── Getters & Setters ────────────────────────────────────────────────────
 
     public String getName() { return name; }
@@ -68,4 +74,7 @@ public class CreateUserRequest {
 
     public String getPhoneNumber() { return phoneNumber; }
     public void setPhoneNumber(String phoneNumber) { this.phoneNumber = phoneNumber; }
+
+    public String getHomeAddressText() { return homeAddressText; }
+    public void setHomeAddressText(String homeAddressText) { this.homeAddressText = homeAddressText; }
 }

@@ -131,7 +131,7 @@ export default function WorkerEarnings() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
-                    <StatusPill status={job.status} />
+                    <StatusPill status={job.status} labelOverrides={{ RELEASED: 'Completed & Paid', SETTLED: 'Completed & Paid' }} />
                     {job.workerPayoutCAD != null && (
                       <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--green)' }}>
                         {fmtCAD(job.workerPayoutCAD)}

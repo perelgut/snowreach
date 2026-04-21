@@ -38,13 +38,16 @@ export default function Signup() {
   const { signUp, refreshProfile } = useAuth()
   const navigate = useNavigate()
 
-  const [name,        setName]        = useState('')
-  const [email,       setEmail]       = useState('')
-  const [password,    setPassword]    = useState('')
-  const [confirm,     setConfirm]     = useState('')
-  const [dob,         setDob]         = useState('')
-  const [phone,       setPhone]       = useState('')
-  const [services, setServices] = useState([]) // 'snow-requester' | 'snow-worker' | 'lawn-requester' | 'lawn-worker'
+  const [name,               setName]               = useState('')
+  const [email,              setEmail]              = useState('')
+  const [password,           setPassword]           = useState('')
+  const [confirm,            setConfirm]            = useState('')
+  const [dob,                setDob]                = useState('')
+  const [phone,              setPhone]              = useState('')
+  const [services,           setServices]           = useState([]) // 'snow-requester' | 'snow-worker' | 'lawn-requester' | 'lawn-worker'
+  const [homeAddressText,    setHomeAddressText]    = useState('')
+  const [baseAddressText,    setBaseAddressText]    = useState('')
+  const [serviceRadiusKm,    setServiceRadiusKm]    = useState(5)
 
   function toggleService(id) {
     setServices(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id])
@@ -57,6 +60,9 @@ export default function Signup() {
     if (services.some(s => s === 'snow-worker'    || s === 'lawn-worker'))    roles.push('worker')
     return roles
   }
+
+  const isRequester = services.some(s => s === 'snow-requester' || s === 'lawn-requester')
+  const isWorker    = services.some(s => s === 'snow-worker'    || s === 'lawn-worker')
   const [tosAccepted, setTosAccepted] = useState(false)
 
   const [error,      setError]      = useState('')
@@ -68,6 +74,8 @@ export default function Signup() {
 
     if (password !== confirm) { setError('Passwords do not match.'); return }
     if (services.length === 0) { setError('Please select at least one service.'); return }
+    if (isRequester && !homeAddressText.trim()) { setError('Please enter your home address.'); return }
+    if (isWorker    && !baseAddressText.trim()) { setError('Please enter your base address.'); return }
     if (!tosAccepted)          { setError('You must accept the Terms of Service and Privacy Policy.'); return }
 
     const roles = deriveRoles()
@@ -85,7 +93,17 @@ export default function Signup() {
         tosVersion:            TOS_VERSION,
         privacyPolicyVersion:  PRIVACY_POLICY_VERSION,
         phoneNumber:           phone.trim() || null,
+        homeAddressText:       isRequester ? homeAddressText.trim() : null,
       })
+
+      // Step 2b — activate worker profile if worker role selected
+      if (isWorker) {
+        await api.activateWorker({
+          designation:          'personal',
+          baseAddressFullText:  baseAddressText.trim(),
+          serviceRadiusKm,
+        })
+      }
 
       // Step 3 — pull the new profile into AuthContext
       await refreshProfile()
@@ -148,6 +166,66 @@ export default function Signup() {
               </label>
             ))}
           </div>
+
+          {/* Home address — shown when requester service selected */}
+          {isRequester && (
+            <div>
+              <Input
+                label="Home address"
+                type="text"
+                value={homeAddressText}
+                onChange={e => setHomeAddressText(e.target.value)}
+                placeholder="123 Main St, Toronto, ON M5V 3A8"
+                required
+                disabled={submitting}
+              />
+              <p style={{ fontSize: 12, color: '#718096', marginTop: 2 }}>
+                Used as a shortcut when you post a job for your own property.
+              </p>
+            </div>
+          )}
+
+          {/* Base address + service radius — shown when worker service selected */}
+          {isWorker && (
+            <div>
+              <Input
+                label="Base address"
+                type="text"
+                value={baseAddressText}
+                onChange={e => setBaseAddressText(e.target.value)}
+                placeholder="456 Oak Ave, Etobicoke, ON M8Y 2B3"
+                required
+                disabled={submitting}
+              />
+              <p style={{ fontSize: 12, color: '#718096', marginTop: 2, marginBottom: 12 }}>
+                Your starting point — used to find nearby jobs.
+              </p>
+
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#1A202C' }}>
+                Acceptable distance from your base address
+              </div>
+              {[
+                { label: '250 m',  value: 0.25 },
+                { label: '1 km',   value: 1    },
+                { label: '5 km',   value: 5    },
+                { label: '10 km',  value: 10   },
+                { label: '25 km',  value: 25   },
+                { label: '50 km',  value: 50   },
+              ].map(opt => (
+                <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer', fontSize: 14 }}>
+                  <input
+                    type="radio"
+                    name="serviceRadius"
+                    value={opt.value}
+                    checked={serviceRadiusKm === opt.value}
+                    onChange={() => setServiceRadiusKm(opt.value)}
+                    disabled={submitting}
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+          )}
 
           {/* ToS */}
           <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13, color: '#4A5568' }}>

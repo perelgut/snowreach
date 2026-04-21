@@ -26,6 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.yosnowmow.dto.WorkerPublicProfileResponse;
+
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.HashMap;
@@ -36,6 +38,9 @@ import java.util.concurrent.ExecutionException;
 
 /**
  * REST controller for Worker profile activation and management.
+ *
+ * Public endpoint (no ownership check):
+ *   GET    /api/users/{uid}/worker/public  — name, rating, job count for job participants
  *
  * Endpoints follow the spec §5 convention of {@code /users/me/worker} for
  * the Worker managing their own profile.  "me" is resolved from the verified
@@ -73,6 +78,34 @@ public class WorkerController {
         this.backgroundCheckService = backgroundCheckService;
         this.insuranceService       = insuranceService;
         this.badgeService           = badgeService;
+    }
+
+    /**
+     * Returns the public Worker profile for display in the requester negotiation UI.
+     *
+     * <p>Any authenticated user who is a participant in a job with this Worker may call
+     * this endpoint.  It intentionally returns only the three non-sensitive fields that
+     * the Requester needs when reviewing offers: name, rating, and job count.
+     *
+     * <p>No ownership check — all private data (address, pricing, financials) is excluded
+     * by the narrow DTO, so this is safe to expose to any signed-in caller.
+     *
+     * @param uid the Firebase Auth UID of the Worker
+     * @return HTTP 200 with a {@link WorkerPublicProfileResponse}; 404 if no Worker profile exists
+     */
+    @GetMapping("/{uid}/worker/public")
+    public ResponseEntity<WorkerPublicProfileResponse> getWorkerPublicProfile(
+            @PathVariable String uid) {
+
+        User user = workerService.getWorkerUser(uid);
+        WorkerProfile wp = user.getWorker();
+
+        WorkerPublicProfileResponse response = new WorkerPublicProfileResponse(
+                user.getName(),
+                wp != null ? wp.getRating() : null,
+                wp != null ? wp.getCompletedJobCount() : 0
+        );
+        return ResponseEntity.ok(response);
     }
 
     /**

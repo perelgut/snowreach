@@ -125,7 +125,7 @@ export default function ActiveJob() {
               {job.status === 'PENDING_APPROVAL' && '✅ Work submitted — awaiting homeowner approval'}
             </div>
           </div>
-          <StatusPill status={job.status} />
+          <StatusPill status={job.status} labelOverrides={{ RELEASED: 'Completed & Paid', SETTLED: 'Completed & Paid' }} />
         </div>
       </div>
 

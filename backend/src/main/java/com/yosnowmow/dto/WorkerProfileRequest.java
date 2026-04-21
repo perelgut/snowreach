@@ -41,10 +41,10 @@ public class WorkerProfileRequest {
 
     /**
      * Maximum distance in km the Worker is willing to travel.
-     * Must be between 1.0 and 25.0.
+     * Discrete UI options: 0.25 (250 m), 1, 5, 10, 25, 50 km.
      */
-    @DecimalMin(value = "1.0", message = "serviceRadiusKm must be at least 1 km")
-    @DecimalMax(value = "25.0", message = "serviceRadiusKm must not exceed 25 km")
+    @DecimalMin(value = "0.1", message = "serviceRadiusKm must be at least 0.1 km")
+    @DecimalMax(value = "50.0", message = "serviceRadiusKm must not exceed 50 km")
     private Double serviceRadiusKm;
 
     /**

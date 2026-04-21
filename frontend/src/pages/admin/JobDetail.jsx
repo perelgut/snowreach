@@ -187,6 +187,7 @@ export default function AdminJobDetail() {
       setReleaseOpen(false)
       await loadJob()
     } catch (err) {
+      setReleaseOpen(false)   // close modal so the error banner is visible
       setActionError(err.response?.data?.message || 'Release failed')
     } finally {
       setActionPending(false)
@@ -833,8 +834,10 @@ export default function AdminJobDetail() {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
               <button className="btn btn-sm btn-full"
-                style={{ background: 'var(--green)', color: '#fff' }}
-                onClick={() => setReleaseOpen(true)} disabled={actionPending}>
+                style={{ background: job.workerPayoutCAD != null ? 'var(--green)' : 'var(--gray-200)', color: job.workerPayoutCAD != null ? '#fff' : 'var(--gray-400)' }}
+                onClick={() => setReleaseOpen(true)}
+                disabled={actionPending || job.workerPayoutCAD == null}
+                title={job.workerPayoutCAD == null ? 'Cannot release: no payout amount set (job must reach AGREED state first)' : ''}>
                 Force Release Payment
               </button>
               <button className="btn btn-danger btn-sm btn-full"
@@ -893,6 +896,10 @@ export default function AdminJobDetail() {
       >
         <p style={{ fontSize: 14, color: 'var(--gray-600)', lineHeight: 1.5 }}>
           Release <strong>{fmtCAD(job.workerPayoutCAD)}</strong> to {worker?.name || 'the Worker'} for job <strong>{job.jobId}</strong>?
+        </p>
+        <p style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 8 }}>
+          Requires the Worker to have completed Stripe Connect onboarding.
+          For testing without Stripe, use <em>Override Status → RELEASED</em> instead.
         </p>
       </Modal>
 

@@ -71,7 +71,7 @@ export default function RequesterHome() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
-                  <StatusPill status={job.status} />
+                  <StatusPill status={job.status} labelOverrides={{ RELEASED: 'Worker Paid', SETTLED: 'Worker Paid' }} />
                   {fmtCAD(job.totalAmountCAD) && (
                     <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-600)' }}>
                       {fmtCAD(job.totalAmountCAD)}

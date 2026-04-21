@@ -16,8 +16,14 @@ const TIME_SLOTS = Array.from({ length: 35 }, (_, i) => {
   return `${String(h).padStart(2, '0')}:${m}`
 })
 
-// Estimate properties in radius (rough: radius^2 * 12)
-const estimateProperties = r => Math.round(r * r * 12)
+const RADIUS_OPTIONS = [
+  { label: '250 m',  value: 0.25 },
+  { label: '1 km',   value: 1    },
+  { label: '5 km',   value: 5    },
+  { label: '10 km',  value: 10   },
+  { label: '25 km',  value: 25   },
+  { label: '50 km',  value: 50   },
+]
 
 // ── Step indicator (reused from PostJob pattern) ─────────────────────────────
 function StepCircle({ n, current }) {
@@ -58,8 +64,8 @@ export default function Register() {
   const photoInputRef = useRef(null)
 
   // Step 3 — Service area & availability
-  const [postalCode, setPostalCode] = useState('')
-  const [radius, setRadius]     = useState(5)
+  const [baseAddress, setBaseAddress]       = useState('')
+  const [serviceRadius, setServiceRadius]   = useState(5)
   const [availability, setAvailability] = useState(
     Object.fromEntries(DAYS.map(d => [d, { enabled: ['Mon','Tue','Wed','Thu','Fri'].includes(d), start: '07:00', end: '18:00' }]))
   )
@@ -117,8 +123,7 @@ export default function Register() {
 
   function validateStep3() {
     const errs = {}
-    if (!/^[A-Za-z]\d[A-Za-z][\s-]?\d[A-Za-z]\d$/.test(postalCode.trim()))
-      errs.postalCode = 'Enter a valid Canadian postal code (e.g. M1A 1A1)'
+    if (!baseAddress.trim()) errs.baseAddress = 'Base address is required'
     if (!DAYS.some(d => availability[d].enabled))
       errs.availability = 'Select at least one available day'
     return errs
@@ -277,20 +282,28 @@ export default function Register() {
           <h2 style={{ fontWeight: 700, marginBottom: 'var(--sp-5)' }}>Service Area &amp; Availability</h2>
 
           <div className="field">
-            <label className="label">Your postal code *</label>
-            <input className="input" placeholder="M1A 1A1" value={postalCode}
-              onChange={e => setPostalCode(e.target.value.toUpperCase())} style={{ maxWidth: 160 }} />
-            {errors.postalCode && <span className="error-text">{errors.postalCode}</span>}
+            <label className="label">Base address *</label>
+            <input className="input" placeholder="456 Oak Ave, Etobicoke, ON M8Y 2B3"
+              value={baseAddress} onChange={e => setBaseAddress(e.target.value)} />
+            <span style={{ fontSize: 12, color: 'var(--gray-500)', marginTop: 2, display: 'block' }}>
+              Your starting point — used to find nearby jobs.
+            </span>
+            {errors.baseAddress && <span className="error-text">{errors.baseAddress}</span>}
           </div>
 
-          {/* Radius slider */}
+          {/* Acceptable distance radio buttons */}
           <div className="field">
-            <label className="label">Service radius: <strong>{radius} km</strong></label>
-            <input type="range" min={1} max={15} value={radius} onChange={e => setRadius(Number(e.target.value))}
-              style={{ width: '100%', marginBottom: 4 }} />
-            <span style={{ fontSize: 12, color: 'var(--gray-500)' }}>
-              Approx. {estimateProperties(radius).toLocaleString()} properties in range
-            </span>
+            <label className="label">Acceptable distance from base address</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+              {RADIUS_OPTIONS.map(opt => (
+                <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
+                  <input type="radio" name="serviceRadius" value={opt.value}
+                    checked={serviceRadius === opt.value}
+                    onChange={() => setServiceRadius(opt.value)} />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
           </div>
 
           {/* Max jobs */}

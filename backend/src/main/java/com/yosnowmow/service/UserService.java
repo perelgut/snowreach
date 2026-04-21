@@ -116,6 +116,9 @@ public class UserService {
         user.setPrivacyPolicyAcceptedAt(now);
         user.setRoles(req.getRoles());
         user.setPhoneNumber(req.getPhoneNumber());
+        if (req.getHomeAddressText() != null && !req.getHomeAddressText().isBlank()) {
+            user.setHomeAddressText(req.getHomeAddressText().trim());
+        }
         user.setAccountStatus("active");
         user.setCreatedAt(now);
         user.setUpdatedAt(now);

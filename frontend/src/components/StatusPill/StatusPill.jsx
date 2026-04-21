@@ -28,14 +28,14 @@ const STATUS_MAP = {
 /**
  * StatusPill — displays a job status as a coloured pill badge.
  *
- * @param {string} status  One of the 11 job state machine statuses
+ * @param {string} status          One of the 11 job state machine statuses
+ * @param {Object} [labelOverrides] Optional map of status → display label, e.g.
+ *                                  { RELEASED: 'Completed & Paid' } for worker views
  */
-export default function StatusPill({ status }) {
-  const { label, text, bg } = STATUS_MAP[status] ?? {
-    label: status,
-    text: '#95A5A6',
-    bg: '#F5F7FA',
-  }
+export default function StatusPill({ status, labelOverrides }) {
+  const base = STATUS_MAP[status] ?? { label: status, text: '#95A5A6', bg: '#F5F7FA' }
+  const { text, bg } = base
+  const label = (labelOverrides && labelOverrides[status]) ?? base.label
 
   return (
     <span style={{

@@ -36,6 +36,18 @@ describe('StatusPill', () => {
     expect(screen.getByText('SOME_FUTURE_STATUS')).toBeInTheDocument()
   })
 
+  // ── labelOverrides ─────────────────────────────────────────────────────────
+
+  test('labelOverrides replaces the default label for the specified status', () => {
+    render(<StatusPill status="RELEASED" labelOverrides={{ RELEASED: 'Completed & Paid' }} />)
+    expect(screen.getByText('Completed & Paid')).toBeInTheDocument()
+  })
+
+  test('labelOverrides does not affect statuses not listed in the override map', () => {
+    render(<StatusPill status="CANCELLED" labelOverrides={{ RELEASED: 'Completed & Paid' }} />)
+    expect(screen.getByText('Cancelled')).toBeInTheDocument()
+  })
+
   // ── Rendering contract ──────────────────────────────────────────────────────
 
   test('renders as an inline element (span)', () => {

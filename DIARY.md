@@ -4443,3 +4443,181 @@ Set to 20 MB to match the largest file the spec allows (dispute evidence). Compl
 Also noted: "CTRL-SHIFT-R" is a browser hard-refresh, not a backend restart. The backend (`./mvnw spring-boot:run`) must be stopped (Ctrl+C) and restarted in its terminal for any Java changes to take effect.
 
 Committed as `a6055ac`.
+
+---
+
+## 2026-04-19 — Prod smoke test + fix: requester 403 on worker profile fetch during NEGOTIATING
+
+### Context
+
+After the full production deployment (GoDaddy domain, Firebase Hosting, Cloud Run backend), a smoke test was run end-to-end:
+- Requester signed up, logged in, posted a job → job appeared as POSTED in Firestore
+- Worker signed up, logged in, browsed POSTED jobs via direct Firestore `onSnapshot` (DispatchService stub is not used in v1.1), made an offer
+- Job moved to NEGOTIATING status in Firestore
+- Requester navigated to Job Status page → saw NEGOTIATING status but the offers panel failed to render
+
+### Root cause
+
+`JobStatus.jsx` called `getUser(offer.workerId)` to fetch the worker's display name and rating for each offer card. `GET /api/users/{uid}` is protected by `UserController.requireSelfOrAdmin()` — returns 403 to anyone who is not the account owner or admin. A requester is neither, so every worker profile fetch 403'd.
+
+The same 403 fired for `getUser(job.workerId)` in the "Your Worker" card, and also for the assigned-worker card shown after NEGOTIATING.
+
+A secondary issue: even if the 403 were fixed by loosening `UserController`, the field names don't match. `JobStatus.jsx` uses `displayName`, `averageRating`, and `totalJobsCompleted`, but the full `User` model returns `name` and `worker.rating` / `worker.completedJobCount`.
+
+### Fix
+
+Added a narrow public endpoint `GET /api/users/{uid}/worker/public` to `WorkerController` that returns only three fields needed for the negotiation UI: `displayName`, `averageRating`, `totalJobsCompleted`. This approach:
+- Exposes no private data (no address, pricing, financials, contact info)
+- Requires only that the caller is authenticated (any signed-in user)
+- Returns the field names the frontend already expects
+- Avoids broadening the full `GET /api/users/{uid}` endpoint
+
+**New files:**
+- `backend/src/main/java/com/yosnowmow/dto/WorkerPublicProfileResponse.java` — DTO with `displayName`, `averageRating`, `totalJobsCompleted`
+
+**Modified files:**
+- `backend/.../controller/WorkerController.java` — added `GET /{uid}/worker/public` endpoint (no auth guard beyond `isSignedIn`)
+- `frontend/src/services/api.js` — added `getWorkerPublicProfile(workerId)` calling the new endpoint
+- `frontend/src/pages/requester/JobStatus.jsx` — replaced both `getUser()` calls with `getWorkerPublicProfile()`
+
+**Security note:** The endpoint is intentionally accessible to any authenticated user without an ownership check. The DTO contains only display-safe data. The spec supports this pattern — a requester who is in a negotiation needs to see the worker's name and rating.
+
+Changes committed and will be deployed via GitHub Actions CI/CD.
+
+---
+
+## 2026-04-19 — Admin account setup: promote-to-admin-prod.js
+
+### Problem
+
+No admin account exists in the production Firebase project. The emulator seed script creates `admin@yosnowmow.test` for local dev, but that account only exists in the emulator. The production project (`yosnowmow-prod`) has no user with the `admin` custom claim.
+
+### Solution
+
+Created `firebase/promote-to-admin-prod.js` — a one-off Node.js script (same pattern as `seed-emulator.js`) that promotes an existing Firebase Auth account to admin in production. The target is `perelgut@gmail.com`.
+
+The script:
+1. Looks up the account by email in Firebase Auth (prod)
+2. Reads the current `roles` array from the Firestore `users/{uid}` document
+3. Merges `"admin"` into the roles list (idempotent — safe to run multiple times)
+4. Sets `{ roles: [..., "admin"] }` as a Firebase custom claim (read by Spring Security)
+5. Updates the Firestore document with `merge: true` to preserve all other fields
+
+Uses ADC (Application Default Credentials) — no service account key file required. Run `gcloud auth application-default login` first, then:
+
+```
+cd firebase && node promote-to-admin-prod.js
+```
+
+**Important:** After running the script, the user must sign out and sign back in (or force-refresh the token with `getIdToken(true)`) for the new role to appear in their ID token and be recognised by the backend.
+
+---
+
+## 2026-04-20 — Fix: admin "Force Release Payment" 422 + error hidden behind modal
+
+### Problem
+
+During smoke testing the admin panel, overriding a job to `ESCROW_HELD` and then clicking "Force Release Payment" returned 422. Two compounding bugs:
+
+1. **Backend 422**: `PaymentService.releasePayment()` requires `workerPayoutCAD != null` and `worker.stripeConnectAccountId != null`. A smoke-test job force-advanced to `ESCROW_HELD` has neither — no price was agreed through the normal flow and no Stripe Connect onboarding was done for test accounts. The 422 is correct behaviour.
+
+2. **Error hidden behind modal**: `applyRelease()` in `JobDetail.jsx` only called `setReleaseOpen(false)` on success, not on failure. The `actionError` banner renders at the top of the page (line 314) — behind the still-open modal overlay — making the error message invisible to the admin.
+
+3. **No precondition guard on button**: "Force Release Payment" was always enabled, even when the preconditions for a successful release (workerPayoutCAD set) were clearly not met.
+
+### Fix — `frontend/src/pages/admin/JobDetail.jsx`
+
+1. Added `setReleaseOpen(false)` to the `catch` block in `applyRelease()` so the modal closes on failure and the error banner becomes visible.
+
+2. Disabled the "Force Release Payment" button when `job.workerPayoutCAD == null`, with a `title` tooltip: "Cannot release: no payout amount set (job must reach AGREED state first)". Button also styled grey when disabled.
+
+3. Added a note inside the release modal: "Requires the Worker to have completed Stripe Connect onboarding. For testing without Stripe, use Override Status → RELEASED instead."
+
+**Note for smoke testing:** To advance a job to RELEASED without Stripe, use **Override Status → RELEASED** in the Admin Actions panel. The override path calls `jobService.transitionStatus()` which writes the status to Firestore directly without touching Stripe.
+
+---
+
+## 2026-04-20 — UX: Worker sees "Completed & Paid" instead of "Released"
+
+### Problem
+
+The `RELEASED` status label was shown as "Released" on the Worker's job screen (Earnings and ActiveJob pages). This is an internal state machine term that is opaque to workers — "Completed & Paid" directly describes what the state means to them.
+
+### Fix
+
+Added a `labelOverrides` prop to `StatusPill` so callers can substitute display labels without touching the shared status map. Worker pages pass `{ RELEASED: 'Completed & Paid', SETTLED: 'Completed & Paid' }`. Admin and requester pages are unchanged.
+
+**Files changed:**
+- `frontend/src/components/StatusPill/StatusPill.jsx` — added optional `labelOverrides` prop
+- `frontend/src/pages/worker/Earnings.jsx` — `{ RELEASED: 'Completed & Paid', SETTLED: 'Completed & Paid' }`
+- `frontend/src/pages/worker/ActiveJob.jsx` — same
+- `frontend/src/pages/requester/Home.jsx` — `{ RELEASED: 'Worker Paid', SETTLED: 'Worker Paid' }`
+- `frontend/src/pages/requester/JobList.jsx` — same
+- `frontend/src/pages/requester/JobStatus.jsx` — same
+- `frontend/src/test/StatusPill.test.jsx` — two new tests covering the override behaviour
+
+| Audience | RELEASED label |
+|---|---|
+| Worker | Completed & Paid |
+| Requester | Worker Paid |
+| Admin | Released (unchanged) |
+
+---
+
+## 2026-04-20 — Feature: Home address (requester) + Base address / Acceptable distance (worker)
+
+### User request
+"Let's add 'Home address' to Requesters and 'Base address' to Workers. These must be supplied at sign up. When a Requester posts a job, they now get an option of 'Use home address' or entering an address. Workers also get to set 'Acceptable distance' being a radio button selection of: 250m, 1km, 5km, 10km, 25km, 50km. This will be used to see if a job should be shown to them or not. When showing a Worker the available jobs, show estimated distance with each job."
+
+### Backend changes (completed prior to this session)
+
+**`backend/.../dto/WorkerProfileRequest.java`** — `serviceRadiusKm` constraints changed to `@DecimalMin("0.1")` / `@DecimalMax("50.0")` to accommodate the 250 m (0.25 km) option.
+
+**`backend/.../dto/CreateUserRequest.java`** — Added optional `homeAddressText` String field with getter/setter.
+
+**`backend/.../model/User.java`** — Added `homeAddressText` String field with getter/setter.
+
+**`backend/.../service/UserService.java`** — In `createUser()`, stores `homeAddressText` if non-blank: `user.setHomeAddressText(req.getHomeAddressText().trim())`.
+
+**`frontend/src/services/api.js`** — Added `activateWorker(body)` which calls `POST /api/users/me/worker` (worker profile activation at signup).
+
+### Frontend changes (this session)
+
+#### `frontend/src/pages/auth/Signup.jsx`
+- Added state: `homeAddressText`, `baseAddressText`, `serviceRadiusKm` (default 5).
+- Added derived booleans `isRequester` / `isWorker` from selected services.
+- Validation: requires `homeAddressText` if requester role; `baseAddressText` if worker role.
+- `createUser()` now passes `homeAddressText` (or null for non-requesters).
+- After `createUser()`, calls `activateWorker({ designation: 'personal', baseAddressFullText, serviceRadiusKm })` if worker role selected.
+- Conditional UI: requester services → show "Home address" input with hint; worker services → show "Base address" input + "Acceptable distance" radio buttons (250m/1km/5km/10km/25km/50km).
+
+#### `frontend/src/pages/requester/PostJob.jsx`
+- Imported `useAuth` to access `userProfile.homeAddressText`.
+- Added state: `useHomeAddr` (boolean, defaults to `true`).
+- When user has a stored home address, Step 1 shows two radio options at top: "My home address — {address}" and "Another address (e.g. a family member's home)".
+- `nextStep1()`: skips address form validation when using home address, advances directly to Step 2.
+- `fullAddress` computed value: returns `userProfile.homeAddressText` when using home address, otherwise the assembled structured address string.
+- Address form fields (street number, name, city, province, postal code, property type) wrapped in a `{(!hasHomeAddress || !useHomeAddr) && (...)}` conditional so they are hidden when using home address.
+
+#### `frontend/src/pages/worker/Register.jsx` (Step 3)
+- Removed postal code field and 1–15 km range slider; removed `estimateProperties()` helper.
+- Added `baseAddress` (text input, full address) and `serviceRadius` (radio, default 5 km) state.
+- `RADIUS_OPTIONS` constant: 250m/1km/5km/10km/25km/50km.
+- `validateStep3()` now validates `baseAddress` is non-empty (instead of postal code regex).
+- Step 3 UI: "Base address *" text input with hint text, then "Acceptable distance from base address" radio button group.
+
+#### `frontend/src/pages/worker/JobRequest.jsx`
+- Added `haversineKm(lat1, lon1, lat2, lon2)` — great-circle distance in km.
+- Added `fmtDistance(km)` — formats as "Xm" when < 1 km, "X.X km" when ≥ 1 km.
+- Added `userProfile` from `useAuth()`.
+- `browsableJobs` derivation now:
+  1. Maps each job to include `_distKm` (Haversine distance from `userProfile.worker.baseCoords` to `job.propertyCoords`, or `null` if either is unavailable).
+  2. Filters out jobs where `_distKm > serviceRadiusKm` (jobs without coords always shown).
+  3. Sorts ascending by distance.
+- Available Jobs card: shows a blue distance pill badge (top-right) when `_distKm` is known.
+
+### Design decisions
+- **Signup vs Register flow:** `Signup.jsx` is the production path (calls backend). `Register.jsx` is the prototype (Phase 0 mock, no backend call) — both updated for UI consistency.
+- **Default to home address:** When `userProfile.homeAddressText` exists, `useHomeAddr` defaults to `true` so the common case (posting for your own home) is one fewer click.
+- **Jobs without coords shown anyway:** Geocoding is async; a job might briefly have no `propertyCoords`. Showing it is better than silently hiding it from the worker.
+- **Worker distance display on opportunity cards:** Not implemented for `newOpportunities` (those come from notifications which don't include full coords); only on the direct `browsableJobs` section where Firestore data is available.

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
-  getJob, getUser, cancelJob, disputeJob,
+  getJob, cancelJob, disputeJob,
   getOffersForJob, respondToOffer, approveJob,
+  getWorkerPublicProfile,
 } from '../../services/api'
 import StatusPill from '../../components/StatusPill'
 import Modal from '../../components/Modal'
@@ -107,7 +108,7 @@ export default function JobStatus() {
   // Load assigned worker profile once workerId is known
   useEffect(() => {
     if (!job?.workerId) { setWorker(null); return }
-    getUser(job.workerId)
+    getWorkerPublicProfile(job.workerId)
       .then(data => setWorker(data))
       .catch(err => console.error('[JobStatus] Failed to load worker profile:', err))
   }, [job?.workerId])
@@ -123,10 +124,10 @@ export default function JobStatus() {
       .catch(err => console.error('[JobStatus] Failed to load offers:', err))
   }, [id, job?.status])
 
-  // Load a worker profile for each offer (fire-and-forget; cached in offerWorkers)
+  // Load public worker profile for each offer (fire-and-forget; cached in offerWorkers state)
   useEffect(() => {
     offers.forEach(offer => {
-      getUser(offer.workerId)
+      getWorkerPublicProfile(offer.workerId)
         .then(u => setOfferWorkers(prev => ({ ...prev, [offer.workerId]: u })))
         .catch(() => {})
     })
@@ -306,7 +307,7 @@ export default function JobStatus() {
       <div className="card" style={{ marginBottom: 'var(--sp-4)', background: 'linear-gradient(135deg, #1A6FDB 0%, #0F4FA8 100%)', color: '#fff' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
           <h1 style={{ fontSize: 'var(--text-lg)', fontWeight: 800 }}>Job Status</h1>
-          <StatusPill status={job.status} />
+          <StatusPill status={job.status} labelOverrides={{ RELEASED: 'Worker Paid', SETTLED: 'Worker Paid' }} />
         </div>
         <div style={{ opacity: .85, fontSize: 14 }}>{STATUS_DESC[job.status] ?? job.status}</div>
       </div>

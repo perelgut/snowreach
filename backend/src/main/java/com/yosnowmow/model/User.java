@@ -92,6 +92,13 @@ public class User {
     /** Zone identifier if the user's address is within a launch zone; null otherwise. */
     private String launchZoneId;
 
+    /**
+     * Requester's home address (full text string).
+     * Stored at signup; offered as a "use home address" shortcut when posting a job.
+     * Null for worker-only accounts.
+     */
+    private String homeAddressText;
+
     // ── Timestamps ───────────────────────────────────────────────────────────
 
     private Timestamp createdAt;
@@ -173,6 +180,9 @@ public class User {
 
     public String getLaunchZoneId() { return launchZoneId; }
     public void setLaunchZoneId(String launchZoneId) { this.launchZoneId = launchZoneId; }
+
+    public String getHomeAddressText() { return homeAddressText; }
+    public void setHomeAddressText(String homeAddressText) { this.homeAddressText = homeAddressText; }
 
     public Timestamp getCreatedAt() { return createdAt; }
     public void setCreatedAt(Timestamp createdAt) { this.createdAt = createdAt; }

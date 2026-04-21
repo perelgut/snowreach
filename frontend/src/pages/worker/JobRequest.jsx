@@ -8,6 +8,25 @@ import Modal from '../../components/Modal'
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const SCOPE_LABELS = { driveway: 'Driveway', sidewalk: 'Walkway / Sidewalk', both: 'Driveway + Walkway' }
+
+// ── Distance helpers ───────────────────────────────────────────────────────
+
+/** Haversine great-circle distance in kilometres. */
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R  = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLon = (lon2 - lon1) * Math.PI / 180
+  const a  = Math.sin(dLat / 2) ** 2
+           + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
+           * Math.sin(dLon / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+/** Format a distance for display: under 1 km shows metres, ≥ 1 km shows X.X km. */
+function fmtDistance(km) {
+  if (km == null) return null
+  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`
+}
 const fmtScope = scope => scope?.map(s => SCOPE_LABELS[s] ?? s).join(', ') ?? '—'
 const fmtCAD = cents => cents != null ? '$' + (cents / 100).toFixed(2) : '—'
 
@@ -24,7 +43,7 @@ const JOB_NOTIFICATION_TYPES = new Set(['NEW_JOB_POSTED'])
 // ── JobRequest page ─────────────────────────────────────────────────────────
 
 export default function JobRequest() {
-  const { currentUser } = useAuth()
+  const { currentUser, userProfile } = useAuth()
 
   // Offers the worker has already submitted (from Firestore jobOffers collection)
   const [myOffers, setMyOffers] = useState([])
@@ -172,8 +191,23 @@ export default function JobRequest() {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  // POSTED jobs not already offered on (direct browse, no notification needed)
-  const browsableJobs = postedJobs.filter(j => !offerJobIds.has(j.jobId))
+  // Worker's base location and service radius for distance filtering
+  const baseCoords     = userProfile?.worker?.baseCoords
+  const radiusKm       = userProfile?.worker?.serviceRadiusKm ?? Infinity
+
+  // Compute distance from worker base to each posted job, then filter by radius.
+  // Jobs without coords are always shown (geocoding may still be in progress).
+  const browsableJobs = postedJobs
+    .filter(j => !offerJobIds.has(j.jobId))
+    .map(j => {
+      const pc = j.propertyCoords
+      const distKm = (baseCoords && pc)
+        ? haversineKm(baseCoords.latitude, baseCoords.longitude, pc.latitude, pc.longitude)
+        : null
+      return { ...j, _distKm: distKm }
+    })
+    .filter(j => j._distKm == null || j._distKm <= radiusKm)
+    .sort((a, b) => (a._distKm ?? Infinity) - (b._distKm ?? Infinity))
 
   const isEmpty = newOpportunities.length === 0 && activeOffers.length === 0 && browsableJobs.length === 0
 
@@ -235,13 +269,23 @@ export default function JobRequest() {
           {browsableJobs.map(job => (
             <div key={job.jobId} className="card" style={{ marginBottom: 'var(--sp-3)', padding: 'var(--sp-4)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--sp-2)' }}>
-                <div>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: 15 }}>{job.propertyAddress?.fullText ?? 'Address pending'}</div>
                   <div style={{ fontSize: 13, color: 'var(--gray-500)', marginTop: 4 }}>
                     {job.scope?.join(', ') ?? '—'}
                     {job.postedPriceCents ? ` · $${(job.postedPriceCents / 100).toFixed(2)} posted` : ''}
                   </div>
                 </div>
+                {job._distKm != null && (
+                  <div style={{
+                    flexShrink: 0, marginLeft: 12,
+                    background: 'var(--blue-light)', color: 'var(--blue-dark)',
+                    borderRadius: 12, padding: '2px 10px', fontSize: 12, fontWeight: 700,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {fmtDistance(job._distKm)}
+                  </div>
+                )}
               </div>
               {job.notesForWorker && (
                 <p style={{ fontSize: 13, color: 'var(--gray-600)', marginBottom: 'var(--sp-3)' }}>{job.notesForWorker}</p>

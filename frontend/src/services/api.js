@@ -206,6 +206,16 @@ export const getUser = (userId) =>
   api.get(`/api/users/${userId}`).then(r => r.data)
 
 /**
+ * Fetch the public Worker profile for display in the negotiation UI.
+ * Returns only { displayName, averageRating, totalJobsCompleted }.
+ * Safe to call for any Worker on a job you participate in.
+ * @param {string} workerId  Firebase Auth UID of the Worker
+ * @returns {Promise<{ displayName: string, averageRating: number|null, totalJobsCompleted: number }>}
+ */
+export const getWorkerPublicProfile = (workerId) =>
+  api.get(`/api/users/${workerId}/worker/public`).then(r => r.data)
+
+/**
  * Register or refresh the FCM device token for push notifications (P1-18).
  * Called after login and whenever the browser grants notification permission.
  * @param {string} userId
@@ -214,6 +224,15 @@ export const getUser = (userId) =>
  */
 export const updateFcmToken = (userId, fcmToken) =>
   api.patch(`/api/users/${userId}/fcm-token`, { fcmToken })
+
+/**
+ * Activate the Worker role for the current user and store initial profile data.
+ * Called at signup for users who select a worker role.
+ * @param {{ designation: string, baseAddressFullText: string, serviceRadiusKm: number }} body
+ * @returns {Promise<User>}
+ */
+export const activateWorker = (body) =>
+  api.post('/api/users/me/worker', body).then(r => r.data)
 
 // ── Worker job-lifecycle API ──────────────────────────────────────────────────
 

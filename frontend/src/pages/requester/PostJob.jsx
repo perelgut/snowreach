@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { postJob } from '../../services/api'
+import useAuth from '../../hooks/useAuth'
 
 const SERVICES = [
   {
@@ -41,6 +42,9 @@ const fmt = cents => '$' + (cents / 100).toFixed(2)
 
 export default function PostJob() {
   const navigate   = useNavigate()
+  const { userProfile } = useAuth()
+  const hasHomeAddress = !!(userProfile?.homeAddressText)
+  const [useHomeAddr, setUseHomeAddr] = useState(true) // default to home address when available
   const [step, setStep] = useState(1)
   const [submitting, setSubmitting] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -52,14 +56,16 @@ export default function PostJob() {
     services: {}, schedule: 'asap', date: '', time: '', notes: '',
   })
 
-  // Assemble the full address string for the API and review screen
-  const fullAddress = [
+  // Assemble the full address string for the API and review screen.
+  // When using home address, we use the stored profile value directly.
+  const enteredAddress = [
     form.unitNumber.trim()
       ? `Unit ${form.unitNumber.trim()}, ${form.streetNumber.trim()} ${form.streetName.trim()}`
       : `${form.streetNumber.trim()} ${form.streetName.trim()}`,
     form.city.trim(),
     `${form.province} ${form.postalCode.trim().toUpperCase()}`,
   ].filter(p => p.replace(/,/g, '').trim()).join(', ')
+  const fullAddress = (hasHomeAddress && useHomeAddr) ? userProfile.homeAddressText : enteredAddress
   const [ack, setAck] = useState(false)
   const [errors, setErrors] = useState({})
 
@@ -86,6 +92,12 @@ export default function PostJob() {
   const CA_POSTAL = /^[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d$/
 
   function nextStep1() {
+    // Skip address form validation when using the stored home address
+    if (hasHomeAddress && useHomeAddr) {
+      setErrors({})
+      setStep(2)
+      return
+    }
     const e = {}
     if (!form.streetNumber.trim()) e.streetNumber = 'Street number is required'
     if (!form.streetName.trim())   e.streetName   = 'Street name is required'
@@ -187,55 +199,85 @@ export default function PostJob() {
         <div className="card">
           <h2 style={{ fontWeight: 700, marginBottom: 'var(--sp-5)' }}>Where do you need service?</h2>
 
-          <div className="grid-2">
-            <div className="field">
-              <label className="label">Street number *</label>
-              <input className="input" placeholder="123" value={form.streetNumber} onChange={e => set('streetNumber', e.target.value)} />
-              {errors.streetNumber && <span className="error-text">{errors.streetNumber}</span>}
+          {/* Address source toggle — only shown when the user has a stored home address */}
+          {hasHomeAddress && (
+            <div style={{ marginBottom: 'var(--sp-5)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {[
+                { val: true,  label: `My home address  —  ${userProfile.homeAddressText}` },
+                { val: false, label: 'Another address (e.g. a family member\'s home)' },
+              ].map(opt => (
+                <label key={String(opt.val)} style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 10,
+                  padding: 'var(--sp-3) var(--sp-4)', borderRadius: 'var(--radius)',
+                  border: `1.5px solid ${useHomeAddr === opt.val ? 'var(--blue)' : 'var(--gray-200)'}`,
+                  background: useHomeAddr === opt.val ? 'var(--blue-light)' : '#fff',
+                  cursor: 'pointer', fontSize: 14,
+                }}>
+                  <input type="radio" name="addrMode" value={String(opt.val)}
+                    checked={useHomeAddr === opt.val}
+                    onChange={() => { setUseHomeAddr(opt.val); setErrors({}) }}
+                    style={{ marginTop: 2, flexShrink: 0 }} />
+                  <span style={{ fontWeight: useHomeAddr === opt.val ? 600 : 400 }}>{opt.label}</span>
+                </label>
+              ))}
             </div>
-            <div className="field">
-              <label className="label">Unit / Apt (optional)</label>
-              <input className="input" placeholder="4B" value={form.unitNumber} onChange={e => set('unitNumber', e.target.value)} />
-            </div>
-          </div>
+          )}
 
-          <div className="field">
-            <label className="label">Street name *</label>
-            <input className="input" placeholder="Main Street" value={form.streetName} onChange={e => set('streetName', e.target.value)} />
-            {errors.streetName && <span className="error-text">{errors.streetName}</span>}
-          </div>
+          {/* Address form — hidden when using home address */}
+          {(!hasHomeAddress || !useHomeAddr) && (
+            <>
+              <div className="grid-2">
+                <div className="field">
+                  <label className="label">Street number *</label>
+                  <input className="input" placeholder="123" value={form.streetNumber} onChange={e => set('streetNumber', e.target.value)} />
+                  {errors.streetNumber && <span className="error-text">{errors.streetNumber}</span>}
+                </div>
+                <div className="field">
+                  <label className="label">Unit / Apt (optional)</label>
+                  <input className="input" placeholder="4B" value={form.unitNumber} onChange={e => set('unitNumber', e.target.value)} />
+                </div>
+              </div>
 
-          <div className="grid-2">
-            <div className="field">
-              <label className="label">City *</label>
-              <input className="input" placeholder="Toronto" value={form.city} onChange={e => set('city', e.target.value)} />
-              {errors.city && <span className="error-text">{errors.city}</span>}
-            </div>
-            <div className="field">
-              <label className="label">Province *</label>
-              <select className="input" value={form.province} onChange={e => set('province', e.target.value)}>
-                {['AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT'].map(p =>
-                  <option key={p} value={p}>{p}</option>
-                )}
-              </select>
-            </div>
-          </div>
+              <div className="field">
+                <label className="label">Street name *</label>
+                <input className="input" placeholder="Main Street" value={form.streetName} onChange={e => set('streetName', e.target.value)} />
+                {errors.streetName && <span className="error-text">{errors.streetName}</span>}
+              </div>
 
-          <div className="field">
-            <label className="label">Postal code *</label>
-            <input className="input" placeholder="M5V 3A8" value={form.postalCode}
-              onChange={e => set('postalCode', e.target.value.toUpperCase())}
-              style={{ maxWidth: 140 }} />
-            {errors.postalCode && <span className="error-text">{errors.postalCode}</span>}
-          </div>
-          <div className="field">
-            <label className="label">Property type</label>
-            <select className="input" value={form.propertyType} onChange={e => set('propertyType', e.target.value)}>
-              <option>House</option><option>Condo / Townhouse</option><option>Commercial</option>
-            </select>
-          </div>
-          {found && <div className="alert alert-success">✓ Address confirmed — Workers will be matched when you post</div>}
-          {searching && <div className="alert alert-info">Validating address…</div>}
+              <div className="grid-2">
+                <div className="field">
+                  <label className="label">City *</label>
+                  <input className="input" placeholder="Toronto" value={form.city} onChange={e => set('city', e.target.value)} />
+                  {errors.city && <span className="error-text">{errors.city}</span>}
+                </div>
+                <div className="field">
+                  <label className="label">Province *</label>
+                  <select className="input" value={form.province} onChange={e => set('province', e.target.value)}>
+                    {['AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT'].map(p =>
+                      <option key={p} value={p}>{p}</option>
+                    )}
+                  </select>
+                </div>
+              </div>
+
+              <div className="field">
+                <label className="label">Postal code *</label>
+                <input className="input" placeholder="M5V 3A8" value={form.postalCode}
+                  onChange={e => set('postalCode', e.target.value.toUpperCase())}
+                  style={{ maxWidth: 140 }} />
+                {errors.postalCode && <span className="error-text">{errors.postalCode}</span>}
+              </div>
+              <div className="field">
+                <label className="label">Property type</label>
+                <select className="input" value={form.propertyType} onChange={e => set('propertyType', e.target.value)}>
+                  <option>House</option><option>Condo / Townhouse</option><option>Commercial</option>
+                </select>
+              </div>
+
+              {found    && <div className="alert alert-success">✓ Address confirmed — Workers will be matched when you post</div>}
+              {searching && <div className="alert alert-info">Validating address…</div>}
+            </>
+          )}
           <button className="btn btn-primary btn-full btn-lg" onClick={nextStep1} disabled={searching}>
             {searching ? 'Searching…' : 'Next →'}
           </button>
