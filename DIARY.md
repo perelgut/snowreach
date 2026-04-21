@@ -4721,3 +4721,26 @@ Added `server.error.include-message: always` to `backend/src/main/resources/appl
 ### Pending (user action required)
 1. Push the two unpushed commits to `main` (`git push origin main`) — this triggers CI/CD for both frontend and backend
 2. Cancel the stuck smoke-test job via Admin panel before re-running Step 1
+
+---
+
+## 2026-04-20 — Fix: photo upload fails with "Invalid bucket name" (BOM in secret)
+
+### Problem
+Worker tapped "Upload completion photo" → got "Photo upload failed — please try again." Cloud Run logs showed the root cause immediately:
+
+```
+com.google.cloud.storage.StorageException: Invalid bucket name: '?yosnowmow-prod.firebasestorage.app'
+GET https://storage.googleapis.com/storage/v1/b/%EF%BB%BFyosnowmow-prod.firebasestorage.app
+```
+
+`%EF%BB%BF` is the UTF-8 BOM (U+FEFF). The `FIREBASE_STORAGE_BUCKET` GCP Secret Manager secret was stored with a leading BOM, likely from copy-pasting the bucket name from a Windows text editor that silently added a BOM.
+
+### Fix
+Added a new clean version (v3) of the `FIREBASE_STORAGE_BUCKET` secret with the correct value and no BOM:
+
+```bash
+echo -n "yosnowmow-prod.firebasestorage.app" | gcloud secrets versions add FIREBASE_STORAGE_BUCKET --project=yosnowmow-prod --data-file=-
+```
+
+A redeploy (triggered by `git push origin main`) will cause Cloud Run to mount the new secret version. The `-n` flag on `echo` also prevents a trailing newline from being stored in the secret, which would cause a similar "invalid bucket name" error.
