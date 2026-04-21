@@ -4698,3 +4698,26 @@ Beta test Step 1 (smoke test end-to-end) revealed four defects. User also clarif
 - Step 1: re-verify all four smoke test items after deploy
 - Step 2: add beta banner (payments not live) — approved by user
 - Steps 3–5: tester recruitment, feedback form, admin coverage plan
+
+---
+
+## 2026-04-20 — Fix: Spring Boot 409 error message hidden from frontend
+
+### Problem
+When a Requester tried to post a job while already having an active job in progress (from the previous smoke test session), the backend correctly returned HTTP 409 with a descriptive `message` field: "You already have an active job. Complete or cancel it before posting a new one."
+
+However, the frontend displayed only the generic Axios error: "Request failed with status code 409". The `data?.message` path on line 165 of `PostJob.jsx` was reading `undefined`.
+
+### Root Cause
+Spring Boot 3.x changed the default for `server.error.include-message` from `always` to `never` (a security hardening decision — prevents leaking internal stack traces). By default, the JSON error body is: `{"status":409,"error":"Conflict"}` — no `message` field.
+
+### Fix
+Added `server.error.include-message: always` to `backend/src/main/resources/application.yml` under the `server.error` block. This restores the `message` field in all error responses so the frontend can display the actual reason to the user.
+
+**File changed:** `backend/src/main/resources/application.yml`
+
+**Note:** The immediate cause of the 409 in this session was a leftover active job from the previous smoke test. That job can be cancelled via the Admin panel (Override Status → CANCELLED). The `server.error.include-message` fix is a correctness fix that ensures all future error scenarios show meaningful messages instead of generic status-code text.
+
+### Pending (user action required)
+1. Push the two unpushed commits to `main` (`git push origin main`) — this triggers CI/CD for both frontend and backend
+2. Cancel the stuck smoke-test job via Admin panel before re-running Step 1
