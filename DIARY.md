@@ -4903,3 +4903,13 @@ Commits pushed to `main`. CI/CD redeploy triggered.
 
 - `feat: POST /api/address/validate endpoint with TDD`
 - `feat: real address validation at Post Job Step 1 with Step 4 modal fallback`
+
+---
+
+## 2026-04-27 — Fix: Login email field missing autoComplete attribute
+
+Chrome console warning: `Input elements should have autocomplete attributes (suggested: "username")` on the email field at `/login`.
+
+The `Input` component already forwards `autoComplete` (added earlier this session for the password fields). The email `Input` in `Login.jsx` simply lacked the prop. Added `autoComplete="username"` — Chrome's recommended value for email-address fields used as login identifiers.
+
+**File changed:** `frontend/src/pages/auth/Login.jsx` — added `autoComplete="username"` to the email Input.
