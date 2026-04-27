@@ -1,33 +1,10 @@
-import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Modal from '../../components/Modal'
-
-// ─── Mock data ────────────────────────────────────────────────────────────────
-
-const WORKER = {
-  initials:      'AM',
-  name:          'Alex M.',
-  rating:        4.8,
-  jobsCompleted: 47,
-  memberSince:   'Jan 2024',
-  equipment:     ['Husqvarna ST224 snowblower', 'Salt / ice-melt spreader', 'LED work light'],
-  serviceArea:   'East York, Scarborough, Danforth',
-  responseTime:  '< 30 min',
-  radius:        '5 km',
-  availability:  'Mon–Fri 6 am–8 pm · Sat–Sun 7 am–6 pm',
-  stats: { responseRate: '98%', avgJobTime: '45 min', disputes: 0 },
-}
-
-const REVIEWS = [
-  { stars: 5, date: 'Mar 14, 2026', text: 'Alex showed up within 20 minutes and did an excellent job. Driveway and walkway were spotless. Would definitely hire again!', reviewer: 'Sandra K.' },
-  { stars: 5, date: 'Feb 28, 2026', text: 'Very professional. Cleared everything quickly and even salted the steps without being asked. Great service.', reviewer: 'David T.' },
-  { stars: 4, date: 'Jan 19, 2026', text: 'Good work overall. Arrived a little later than expected but communicated throughout. Steps could have been a bit more thorough.', reviewer: 'Maria L.' },
-]
 
 // ─── Star renderer ─────────────────────────────────────────────────────────────
 
 function Stars({ rating, size = 16 }) {
-  const full  = Math.floor(rating)
+  const full  = Math.floor(rating ?? 0)
   const empty = 5 - full
   return (
     <span style={{ fontSize: size, color: '#F6AD55', letterSpacing: 1 }}>
@@ -45,33 +22,44 @@ const BADGE_META = {
   EXPERIENCED: { icon: '◆', label: 'Experienced',         tooltip: '100+ jobs completed',               color: '#8E44AD', bg: '#F5EEF8' },
 }
 
-// ─── Trust badge chip ──────────────────────────────────────────────────────────
-
 function TrustBadge({ badgeId }) {
   const meta = BADGE_META[badgeId]
   if (!meta) return null
   return (
-    <span
-      title={meta.tooltip}
-      style={{
-        fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
-        background: meta.bg, color: meta.color,
-        border: `1px solid ${meta.color}`,
-        cursor: 'default',
-      }}
-    >
+    <span title={meta.tooltip} style={{
+      fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
+      background: meta.bg, color: meta.color, border: `1px solid ${meta.color}`, cursor: 'default',
+    }}>
       {meta.icon} {meta.label}
     </span>
   )
 }
 
+function fmtDate(ts) {
+  if (!ts) return ''
+  try {
+    const d = ts.seconds ? new Date(ts.seconds * 1000) : new Date(ts)
+    return d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })
+  } catch { return '' }
+}
+
 // ─── Shared profile content ────────────────────────────────────────────────────
 
-// In the live app, activeBadges would be fetched from GET /api/users/{uid}/worker/badges.
-// For the prototype we derive them from the mock worker's known attributes.
-const MOCK_ACTIVE_BADGES = ['VERIFIED']  // Alex has background check; insurance pending in prototype
+/**
+ * @param {object} worker     Public worker profile from getWorkerPublicProfile()
+ * @param {Array}  jobRatings Ratings for the current job (from getRatings(jobId))
+ */
+function WorkerProfileContent({ worker, jobRatings = [] }) {
+  const displayName   = worker?.displayName   ?? 'Worker'
+  const avgRating     = worker?.averageRating ?? 0
+  const jobsCompleted = worker?.totalJobsCompleted ?? 0
+  const badges        = worker?.badges        ?? ['VERIFIED']
 
-function WorkerProfileContent() {
+  // Rating this requester left for the worker (raterRole = REQUESTER)
+  const myReview = jobRatings.find(r => r.raterRole === 'REQUESTER')
+
+  const initials = displayName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
 
@@ -84,86 +72,55 @@ function WorkerProfileContent() {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 22, fontWeight: 700, flexShrink: 0,
           }}>
-            {WORKER.initials}
+            {initials}
           </div>
           <div>
-            <div style={{ fontWeight: 800, fontSize: 20 }}>{WORKER.name}</div>
+            <div style={{ fontWeight: 800, fontSize: 20 }}>{displayName}</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-              <Stars rating={WORKER.rating} size={16} />
-              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--gray-700)' }}>{WORKER.rating}</span>
+              <Stars rating={avgRating} size={16} />
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--gray-700)' }}>
+                {avgRating > 0 ? avgRating.toFixed(1) : 'No rating yet'}
+              </span>
             </div>
             <div style={{ fontSize: 13, color: 'var(--gray-500)', marginTop: 2 }}>
-              {WORKER.jobsCompleted} jobs completed · Member since {WORKER.memberSince}
+              {jobsCompleted} job{jobsCompleted !== 1 ? 's' : ''} completed
             </div>
           </div>
         </div>
 
-        {/* Trust badges — each chip shows icon + label + tooltip */}
-        {MOCK_ACTIVE_BADGES.length > 0 && (
+        {badges.length > 0 && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {MOCK_ACTIVE_BADGES.map(id => <TrustBadge key={id} badgeId={id} />)}
+            {badges.map(id => <TrustBadge key={id} badgeId={id} />)}
           </div>
         )}
       </div>
 
-      {/* Stats bar */}
-      <div className="card" style={{ display: 'flex', justifyContent: 'space-around', textAlign: 'center', padding: 'var(--sp-4)' }}>
-        {[
-          { label: 'Response Rate', value: WORKER.stats.responseRate },
-          { label: 'Avg. Job Time', value: WORKER.stats.avgJobTime },
-          { label: 'Disputes',      value: WORKER.stats.disputes },
-        ].map(({ label, value }) => (
-          <div key={label}>
-            <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--blue)' }}>{value}</div>
-            <div style={{ fontSize: 12, color: 'var(--gray-500)', marginTop: 2 }}>{label}</div>
+      {/* Your review of this worker */}
+      {myReview && (
+        <div className="card" style={{ background: 'var(--blue-light)', border: '1.5px solid var(--blue)' }}>
+          <h3 style={{ fontWeight: 700, fontSize: 14, marginBottom: 'var(--sp-3)', color: 'var(--blue)' }}>
+            Your Review
+          </h3>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <Stars rating={myReview.stars} size={16} />
+            {myReview.createdAt && (
+              <span style={{ fontSize: 12, color: 'var(--gray-400)' }}>{fmtDate(myReview.createdAt)}</span>
+            )}
           </div>
-        ))}
-      </div>
-
-      {/* Equipment */}
-      <div className="card">
-        <h3 style={{ fontWeight: 700, fontSize: 14, marginBottom: 'var(--sp-3)' }}>Equipment</h3>
-        <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {WORKER.equipment.map(item => (
-            <li key={item} style={{ fontSize: 14, color: 'var(--gray-600)', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ color: 'var(--blue)', fontWeight: 700 }}>❄</span> {item}
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {/* Service area & availability */}
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 14 }}>
-        <h3 style={{ fontWeight: 700, fontSize: 14, marginBottom: 0 }}>Service Area & Availability</h3>
-        {[
-          { label: 'Area',          value: WORKER.serviceArea },
-          { label: 'Response time', value: WORKER.responseTime },
-          { label: 'Radius',        value: WORKER.radius },
-          { label: 'Hours',         value: WORKER.availability },
-        ].map(({ label, value }) => (
-          <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--sp-4)' }}>
-            <span style={{ color: 'var(--gray-500)', flexShrink: 0 }}>{label}</span>
-            <span style={{ fontWeight: 600, textAlign: 'right' }}>{value}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Reviews */}
-      <div className="card">
-        <h3 style={{ fontWeight: 700, fontSize: 14, marginBottom: 'var(--sp-4)' }}>Recent Reviews</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
-          {REVIEWS.map((r, i) => (
-            <div key={i} style={{ paddingBottom: i < REVIEWS.length - 1 ? 'var(--sp-4)' : 0, borderBottom: i < REVIEWS.length - 1 ? '1px solid var(--gray-100)' : 'none' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                <Stars rating={r.stars} size={14} />
-                <span style={{ fontSize: 12, color: 'var(--gray-400)' }}>{r.date}</span>
-              </div>
-              <p style={{ fontSize: 14, color: 'var(--gray-600)', lineHeight: 1.5, margin: '0 0 4px' }}>{r.text}</p>
-              <span style={{ fontSize: 12, color: 'var(--gray-400)', fontWeight: 600 }}>— {r.reviewer}</span>
+          {myReview.reviewText ? (
+            <p style={{ fontSize: 14, color: 'var(--gray-700)', lineHeight: 1.5, margin: '0 0 4px' }}>
+              "{myReview.reviewText}"
+            </p>
+          ) : (
+            <p style={{ fontSize: 13, color: 'var(--gray-400)', fontStyle: 'italic' }}>No written review</p>
+          )}
+          {myReview.wouldRepeat != null && (
+            <div style={{ fontSize: 12, color: 'var(--gray-500)', marginTop: 6 }}>
+              {myReview.wouldRepeat ? '👍 Would hire again' : '👎 Would not hire again'}
             </div>
-          ))}
+          )}
         </div>
-      </div>
+      )}
 
     </div>
   )
@@ -188,10 +145,10 @@ export default function WorkerProfile() {
 
 // ─── Modal wrapper (named export) ─────────────────────────────────────────────
 
-export function WorkerProfileModal({ isOpen, onClose }) {
+export function WorkerProfileModal({ isOpen, onClose, worker, jobRatings }) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Worker Profile" size="lg">
-      <WorkerProfileContent />
+      <WorkerProfileContent worker={worker} jobRatings={jobRatings} />
     </Modal>
   )
 }

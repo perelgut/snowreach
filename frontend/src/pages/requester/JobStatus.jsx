@@ -754,7 +754,7 @@ export default function JobStatus() {
       </Modal>
 
       {/* Worker profile modal */}
-      <WorkerProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
+      <WorkerProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} worker={worker} jobRatings={ratings} />
 
       {/* Dispute modal */}
       <Modal
