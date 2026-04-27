@@ -142,6 +142,7 @@ export default function Login() {
             value={password}
             onChange={e => setPassword(e.target.value)}
             placeholder="••••••••"
+            autoComplete="current-password"
             required
             disabled={submitting}
           />

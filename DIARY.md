@@ -4744,3 +4744,59 @@ echo -n "yosnowmow-prod.firebasestorage.app" | gcloud secrets versions add FIREB
 ```
 
 A redeploy (triggered by `git push origin main`) will cause Cloud Run to mount the new secret version. The `-n` flag on `echo` also prevents a trailing newline from being stored in the secret, which would cause a similar "invalid bucket name" error.
+
+---
+
+## 2026-04-27 — Fix: Signup 422 on worker activation + missing autocomplete attributes
+
+### Problem
+
+Two bugs reported from the browser console during signup:
+
+1. **`autocomplete` warnings** — Chrome logged DOM warnings on all password `<input>` elements ("Input elements should have autocomplete attributes"). The `Input` component did not accept or forward an `autoComplete` prop, so no `autocomplete` attribute was ever rendered.
+
+2. **422 Unprocessable Entity on `POST /api/users/me/worker`** — When a user selected a worker role during signup and submitted, the backend rejected the request. Root cause: `WorkerService.validateRequiredActivationFields()` requires six fields (`designation`, `baseAddressFullText`, `serviceRadiusKm`, `bufferOptIn`, `tiers`, `hstRegistered`) but the signup form was only sending three (`designation`, `baseAddressFullText`, `serviceRadiusKm`).
+
+### Discussion
+
+The `WorkerProfileRequest` DTO is shared between the `POST` (activate) and `PATCH` (update) endpoints, so `@NotNull` is not used on the DTO itself — the service enforces required-at-activation fields manually in `validateRequiredActivationFields`. The signup form was written without reference to this list and missed three fields.
+
+For the signup flow, sensible defaults were chosen for the missing fields:
+- `bufferOptIn: false` — new workers do not opt in to extra-radius jobs until they decide to
+- `hstRegistered: false` — the vast majority of neighbourhood workers are not HST registrants
+- `tiers: [{ maxDistanceKm: serviceRadiusKm, priceCAD: 25.0 }]` — a single flat-rate tier covering the full service radius at a $25 default; workers are expected to update their pricing in settings after onboarding
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `frontend/src/components/Input/Input.jsx` | Added `autoComplete` prop; forwarded to `<input>` element |
+| `frontend/src/pages/auth/Login.jsx` | Added `autoComplete="current-password"` to password field |
+| `frontend/src/pages/auth/Signup.jsx` | Added `autoComplete="new-password"` to both password fields; added `bufferOptIn`, `hstRegistered`, and `tiers` to `activateWorker` call |
+| `frontend/src/services/api.js` | Updated JSDoc for `activateWorker` to document full required body shape |
+
+---
+
+## 2026-04-27 — Feature: Lawn mowing service on Post Job
+
+### Discussion
+
+User requested that "Mow the lawn" appear as a selectable service on the Post Job — Step 2 screen, with small/medium/large yard size options.
+
+Two approaches were considered:
+- **A.** Store signup service selections (`signedUpServices`) in the user profile and use that to filter/default services per user — requires a backend schema change.
+- **B.** Show all services (snow + lawn) to all requesters, no filtering — purely a frontend change plus one backend allowlist update.
+
+User chose B to allow combining snow and lawn services in a single job.
+
+Pricing confirmed by user: Small $40 / Medium $65 / Large $95.
+
+A scope validation issue was discovered during design: `JobService.java` had a hardcoded `VALID_SCOPE = Set.of("driveway", "sidewalk", "both")`. Passing `"lawn"` without updating this would have returned a 422. Added `"lawn"` to the set.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `frontend/src/pages/requester/PostJob.jsx` | Added `lawn` entry to `SERVICES` array; added `lawn` scope mapping in `submit()` |
+| `backend/src/main/java/com/yosnowmow/service/JobService.java` | Added `"lawn"` to `VALID_SCOPE` |
+| `docs/superpowers/specs/2026-04-27-lawn-mowing-service-design.md` | Design spec |

@@ -11,6 +11,7 @@ import styles from './Input.module.css'
  * @param {boolean}  disabled
  * @param {string}   placeholder
  * @param {string}   id          Auto-derived from label if omitted
+ * @param {string}   autoComplete  HTML autocomplete attribute (e.g. "current-password", "new-password")
  * @param {boolean}  multiline   Renders <textarea> instead of <input>
  * @param {*}        value, onChange, onBlur  — forwarded to the element
  */
@@ -23,6 +24,7 @@ export default function Input({
   disabled = false,
   placeholder,
   id,
+  autoComplete,
   multiline = false,
   value,
   onChange,
@@ -63,6 +65,7 @@ export default function Input({
           className={inputClass}
           disabled={disabled}
           placeholder={placeholder}
+          autoComplete={autoComplete}
           value={value}
           onChange={onChange}
           onBlur={onBlur}

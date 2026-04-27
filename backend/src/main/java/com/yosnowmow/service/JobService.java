@@ -60,7 +60,7 @@ public class JobService {
     );
 
     /** Valid scope values per spec §3.2. */
-    private static final Set<String> VALID_SCOPE = Set.of("driveway", "sidewalk", "both");
+    private static final Set<String> VALID_SCOPE = Set.of("driveway", "sidewalk", "both", "lawn");
 
     /**
      * Valid state transitions: fromStatus → set of allowed toStatuses.

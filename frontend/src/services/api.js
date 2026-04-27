@@ -228,7 +228,7 @@ export const updateFcmToken = (userId, fcmToken) =>
 /**
  * Activate the Worker role for the current user and store initial profile data.
  * Called at signup for users who select a worker role.
- * @param {{ designation: string, baseAddressFullText: string, serviceRadiusKm: number }} body
+ * @param {{ designation: string, baseAddressFullText: string, serviceRadiusKm: number, bufferOptIn: boolean, hstRegistered: boolean, tiers: Array<{maxDistanceKm: number, priceCAD: number}> }} body
  * @returns {Promise<User>}
  */
 export const activateWorker = (body) =>

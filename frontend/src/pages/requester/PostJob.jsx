@@ -36,6 +36,14 @@ const SERVICES = [
       { key: 'large',  label: 'Large',  desc: 'Large area',  price: 3000 },
     ],
   },
+  {
+    key: 'lawn', label: 'Mow the lawn',
+    sizes: [
+      { key: 'small',  label: 'Small',  desc: '< 500 m²',    price: 4000 },
+      { key: 'medium', label: 'Medium', desc: '500–1,500 m²', price: 6500 },
+      { key: 'large',  label: 'Large',  desc: '1,500+ m²',   price: 9500 },
+    ],
+  },
 ]
 
 const fmt = cents => '$' + (cents / 100).toFixed(2)
@@ -130,6 +138,7 @@ export default function PostJob() {
       if (form.services.walkway || form.services.steps || form.services.salting) {
         scopeSet.add('sidewalk')
       }
+      if (form.services.lawn) scopeSet.add('lawn')
       const scope = scopeSet.size > 0 ? [...scopeSet] : ['driveway']
 
       // Build detailed service description for the Worker notes field.

@@ -96,12 +96,17 @@ export default function Signup() {
         homeAddressText:       isRequester ? homeAddressText.trim() : null,
       })
 
-      // Step 2b — activate worker profile if worker role selected
+      // Step 2b — activate worker profile if worker role selected.
+      // bufferOptIn, hstRegistered, and a single default tier are required by
+      // the backend at activation; workers can update pricing later via settings.
       if (isWorker) {
         await api.activateWorker({
-          designation:          'personal',
-          baseAddressFullText:  baseAddressText.trim(),
+          designation:         'personal',
+          baseAddressFullText: baseAddressText.trim(),
           serviceRadiusKm,
+          bufferOptIn:         false,
+          hstRegistered:       false,
+          tiers:               [{ maxDistanceKm: serviceRadiusKm, priceCAD: 25.0 }],
         })
       }
 
@@ -135,10 +140,10 @@ export default function Signup() {
             placeholder="you@example.com" required disabled={submitting} />
 
           <Input label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)}
-            placeholder="At least 6 characters" required disabled={submitting} />
+            placeholder="At least 6 characters" autoComplete="new-password" required disabled={submitting} />
 
           <Input label="Confirm password" type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
-            placeholder="••••••••" required disabled={submitting} />
+            placeholder="••••••••" autoComplete="new-password" required disabled={submitting} />
 
           <Input label="Date of birth (YYYY-MM-DD)" type="text" value={dob} onChange={e => setDob(e.target.value)}
             placeholder="1957-11-23" required disabled={submitting} />
