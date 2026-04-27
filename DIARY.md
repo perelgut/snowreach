@@ -5015,3 +5015,24 @@ These are no-ops: the job is already RELEASED by the time `releasePayment` is ca
 | `frontend/src/pages/requester/RateWorker.jsx` | Rewritten — real API, handles already-rated, shows worker's rating |
 | `frontend/src/pages/requester/JobStatus.jsx` | Expanded canRate, independent Rate button, loads ratings |
 | `frontend/src/pages/worker/ActiveJob.jsx` | Added worker-to-requester inline rating form; expanded reachable states |
+
+---
+
+## 2026-04-27 — Fix: Rating/comment not visible when clicking "Your Worker"
+
+### Problem
+
+Requester rated the worker and left a comment, but the Worker Profile modal showed nothing — it was entirely hardcoded with three mock reviews and mock worker data. `WorkerProfileContent` used a hardcoded `WORKER` constant and `REVIEWS` array; no props, no API calls.
+
+### Fix
+
+Rewrote `WorkerProfile.jsx` to accept `worker` (the public profile already loaded by `JobStatus.jsx`) and `jobRatings` (the ratings array already loaded for rateable states). The component now shows real worker name, rating, jobs completed, and badges from the API. A "Your Review" card is shown when the requester has rated the current job — stars, date, written comment, and "would hire again" indicator.
+
+`JobStatus.jsx` passes `worker={worker}` and `jobRatings={ratings}` into `<WorkerProfileModal>`.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `frontend/src/pages/requester/WorkerProfile.jsx` | Replaced mock constants with real props; added "Your Review" card |
+| `frontend/src/pages/requester/JobStatus.jsx` | Passes `worker` and `ratings` to `WorkerProfileModal` |
