@@ -30,7 +30,9 @@ api.interceptors.request.use(async (config) => {
   return config
 })
 
-// Log 4xx/5xx errors; surface 401 as a warning
+// Log 4xx/5xx errors; surface 401 as a warning.
+// Also normalise RFC 7807 Problem JSON: copy 'detail' → 'message' so every
+// caller can use err.response?.data?.message regardless of error format.
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -40,6 +42,10 @@ api.interceptors.response.use(
       console.warn('[api] 403 Forbidden — user lacks required role')
     } else {
       console.error('[api] Request failed:', error.response?.status, error.message)
+    }
+    const data = error.response?.data
+    if (data && data.detail && !data.message) {
+      data.message = data.detail
     }
     return Promise.reject(error)
   }
