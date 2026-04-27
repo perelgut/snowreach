@@ -4913,3 +4913,26 @@ Chrome console warning: `Input elements should have autocomplete attributes (sug
 The `Input` component already forwards `autoComplete` (added earlier this session for the password fields). The email `Input` in `Login.jsx` simply lacked the prop. Added `autoComplete="username"` — Chrome's recommended value for email-address fields used as login identifiers.
 
 **File changed:** `frontend/src/pages/auth/Login.jsx` — added `autoComplete="username"` to the email Input.
+
+---
+
+## 2026-04-27 — Fix: Worker 403 on GET /api/jobs/{jobId} + signup email autocomplete
+
+### Problems
+
+1. **Worker 403 on job read** — A newly created worker tried to browse a POSTED job to submit a counter-offer. `JobService.getJobForCaller()` denied access because the worker wasn't in `matchedWorkerIds`. The original code assumed sequential dispatch (worker is pre-matched before seeing the job), but the current model is an open marketplace where any worker can browse POSTED/NEGOTIATING jobs and self-select. The `matchAndStoreWorkers` only ran at job-post time so workers created afterwards were never in `matchedWorkerIds`.
+
+2. **Signup email autocomplete warning** — Chrome console showed the same "suggested: username" warning on the signup page email field. Same root cause as the login fix earlier.
+
+### Fix
+
+**Backend (`JobService.java`):** Replaced `isMatchedWorker` (checks `matchedWorkerIds` list) with `isBrowsableByWorker` (checks `hasRole("worker") && status is POSTED or NEGOTIATING`). Any authenticated worker can now read a job that's still accepting offers. The existing controller-level logic already strips `propertyAddress` and `propertyCoords` from workers until the job reaches CONFIRMED — so location privacy is preserved.
+
+**Frontend (`Signup.jsx`):** Added `autoComplete="username"` to the email Input.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `backend/src/main/java/com/yosnowmow/service/JobService.java` | `getJobForCaller()`: replaced matchedWorkerIds check with POSTED/NEGOTIATING status check |
+| `frontend/src/pages/auth/Signup.jsx` | Added `autoComplete="username"` to email Input |
