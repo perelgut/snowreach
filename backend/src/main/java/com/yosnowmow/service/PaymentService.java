@@ -446,8 +446,9 @@ public class PaymentService {
                         "Job has no assigned Worker");
             }
             if (job.getWorkerPayoutCAD() == null) {
-                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "Worker payout amount not set on job");
+                // Admin may have bypassed the normal AGREED flow; skip Stripe transfer.
+                log.warn("releasePayment: workerPayoutCAD not set on job {} — skipping Stripe transfer", jobId);
+                return;
             }
 
             // Fetch the Worker's Stripe Connect account ID.
@@ -460,10 +461,11 @@ public class PaymentService {
                     : null;
 
             if (connectAccountId == null || connectAccountId.isBlank()) {
-                log.error("Worker {} has no Stripe Connect account — cannot release payment for job {}",
+                // Worker has not completed Stripe Connect onboarding (or Stripe is not yet
+                // configured in this environment). Job is already RELEASED; log and skip transfer.
+                log.warn("releasePayment: worker {} has no Stripe Connect account — skipping transfer for job {}",
                         job.getWorkerId(), jobId);
-                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "Worker has not completed Stripe Connect onboarding");
+                return;
             }
 
             // ── Fraud check (P3-05) ─────────────────────────────────────────────
