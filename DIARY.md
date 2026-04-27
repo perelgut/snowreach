@@ -4800,3 +4800,28 @@ A scope validation issue was discovered during design: `JobService.java` had a h
 | `frontend/src/pages/requester/PostJob.jsx` | Added `lawn` entry to `SERVICES` array; added `lawn` scope mapping in `submit()` |
 | `backend/src/main/java/com/yosnowmow/service/JobService.java` | Added `"lawn"` to `VALID_SCOPE` |
 | `docs/superpowers/specs/2026-04-27-lawn-mowing-service-design.md` | Design spec |
+
+---
+
+## 2026-04-27 — Fix: POST /api/jobs 422 — BOM in MAPS_API_KEY + RFC 7807 error not surfacing
+
+### Problem
+
+Every attempt to post a job returned 422. Two issues compounded each other:
+
+1. **Invalid Google Maps API key** — `MAPS_API_KEY` secret (version 1) had a UTF-8 BOM prepended, exactly as previously seen with `FIREBASE_STORAGE_BUCKET`. Cloud Run passed the BOM-prefixed key to `GeocodingService`, which got "Invalid API key" back from Google Maps and threw a `GeocodingException` → 422 "Could not resolve the property address."
+
+2. **Backend error message not surfacing in UI** — `GlobalExceptionHandler` returns RFC 7807 Problem JSON with a `detail` field, but the frontend error handler in `PostJob.jsx` (and elsewhere) only checked `data?.message` and `data?.error`. The `detail` field was silently ignored, so users saw the generic axios error ("Request failed with status code 422") instead of the backend message.
+
+### Fix
+
+- Added clean `MAPS_API_KEY` secret version 2 using `tr -d '﻿\r\n'` to strip BOM and whitespace before piping into `gcloud secrets versions add`.
+- Added normalisation in the axios response interceptor in `api.js`: when `data.detail` exists and `data.message` does not, copy `detail` → `message`. This is a one-place fix that benefits every API caller in the app.
+- The `git push` that carried the `api.js` fix also triggered CI/CD redeploy, causing Cloud Run to mount the new clean secret version.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `frontend/src/services/api.js` | Response interceptor normalises RFC 7807 `detail` → `message` |
+| `MAPS_API_KEY` (GCP secret) | Version 2 written without BOM |
