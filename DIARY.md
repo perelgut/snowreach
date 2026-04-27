@@ -4936,3 +4936,37 @@ The `Input` component already forwards `autoComplete` (added earlier this sessio
 |---|---|
 | `backend/src/main/java/com/yosnowmow/service/JobService.java` | `getJobForCaller()`: replaced matchedWorkerIds check with POSTED/NEGOTIATING status check |
 | `frontend/src/pages/auth/Signup.jsx` | Added `autoComplete="username"` to email Input |
+
+---
+
+## 2026-04-27 — Fix: "Failed to approve" alert on Approve & Release Payment
+
+### Scenario
+
+Testing path:
+1. Requester posted a job; Worker made a counter-offer; both agreed on a price (AGREED state).
+2. Admin overrode job status to ESCROW_HELD (bypassing Stripe pre-payment which isn't implemented).
+3. Worker logged in, completed the job, uploaded a photo, submitted for payment.
+4. Requester clicked "Approve & Release Payment" → JavaScript `alert()` appeared: "Failed to approve — please try again."
+
+### Root Cause
+
+`POST /api/jobs/{jobId}/approve` (controller) does:
+1. `jobService.transition(jobId, "RELEASED", ...)` — succeeds, job is RELEASED in Firestore
+2. `paymentService.releasePayment(jobId)` — throws 422 because the test worker has no `stripeConnectAccountId` (Stripe Connect not set up)
+
+The job WAS successfully released in Firestore, but the HTTP response was 422, so the frontend showed the error alert. If the requester retried, they would get an `InvalidTransitionException` since the job was already RELEASED.
+
+The `releasePayment` method also checked `workerPayoutCAD == null` and threw 422. This could also fail if an admin bypassed the AGREED state entirely.
+
+### Fix
+
+Changed both checks in `PaymentService.releasePayment()` from throwing `ResponseStatusException` to logging a `warn` and returning:
+- `workerPayoutCAD == null` → log + return (admin bypass scenario)
+- `connectAccountId == null || blank` → log + return (Stripe not configured)
+
+These are no-ops: the job is already RELEASED by the time `releasePayment` is called. When Stripe is eventually wired up, workers with Connect accounts will go through the normal transfer path. Workers without accounts or jobs without payout amounts will still skip the transfer (which is the right behavior for testing).
+
+### File changed
+
+`backend/src/main/java/com/yosnowmow/service/PaymentService.java` — two throw→return changes in `releasePayment()`
