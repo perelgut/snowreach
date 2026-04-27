@@ -4970,3 +4970,48 @@ These are no-ops: the job is already RELEASED by the time `releasePayment` is ca
 ### File changed
 
 `backend/src/main/java/com/yosnowmow/service/PaymentService.java` — two throw→return changes in `releasePayment()`
+
+---
+
+## 2026-04-27 — Feature: Post-completion ratings for both Requester and Worker
+
+### Request
+
+> "at any point after a job is listed as done by a Worker (whether disputed or not), the Requester can rate the worker and leave a comment. Also, there's no reason why Workers shouldn't be able to leave comments about Requesters - but only if a job has been entered as complete or disputed."
+
+### What existed
+
+- Backend: `RatingService`, `RatingController` (`POST/GET /api/jobs/{jobId}/rating`), `Rating` model — all implemented but rateable statuses were only `PENDING_APPROVAL`, `RELEASED`, `SETTLED` (DISPUTED missing)
+- Frontend: `RateWorker.jsx` page existed but was mocked (used MockStateContext, called `setJobStatus` instead of API); no worker-to-requester rating UI anywhere; no API functions for ratings in `api.js`; `canRate` in JobStatus.jsx was `job.status === 'PENDING_APPROVAL'` only and the button only showed while `canApprove` was true
+
+### Changes
+
+**Backend (`RatingService.java`):** Added `DISPUTED` to `RATEABLE_STATUSES`. Both roles can now submit ratings at PENDING_APPROVAL, DISPUTED, RELEASED, or SETTLED.
+
+**Frontend (`api.js`):** Added `submitRating(jobId, data)` and `getRatings(jobId)`.
+
+**Frontend (`RateWorker.jsx`):** Full rewrite — removed all mock state. Now loads job, worker profile, and existing ratings via API. Handles: (a) already-rated state showing submitted rating; (b) worker's rating of the requester shown read-only while submitting; (c) real API submit with error handling; (d) confirmation screen post-submit.
+
+**Frontend (`JobStatus.jsx`):**
+- Added `getRatings` import and `ratings` / `alreadyRated` state
+- New useEffect loads ratings whenever job is in a rateable state
+- `canRate` now: `['PENDING_APPROVAL', 'DISPUTED', 'RELEASED', 'SETTLED'].includes(job.status) && !!job.workerId`
+- "Rate Your Worker" button moved to its own block, independent of `canApprove` — shows at any post-completion state
+- If already rated: shows "View Your Rating" (secondary style) instead of the rating button
+
+**Frontend (`ActiveJob.jsx`):**
+- Added `submitRating` and `getRatings` imports
+- Expanded job discovery to include DISPUTED/RELEASED/SETTLED jobs (so the rating form is always reachable)
+- Added inline "Rate this homeowner" card with star widget, optional comment (500 chars), and "Would you work for them again?" toggle
+- On mount checks existing ratings and shows "already rated" if worker already submitted
+- Status banner and info cards extended to handle DISPUTED, RELEASED, SETTLED states
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `backend/src/main/java/com/yosnowmow/service/RatingService.java` | Added DISPUTED to RATEABLE_STATUSES |
+| `frontend/src/services/api.js` | Added `submitRating` and `getRatings` |
+| `frontend/src/pages/requester/RateWorker.jsx` | Rewritten — real API, handles already-rated, shows worker's rating |
+| `frontend/src/pages/requester/JobStatus.jsx` | Expanded canRate, independent Rate button, loads ratings |
+| `frontend/src/pages/worker/ActiveJob.jsx` | Added worker-to-requester inline rating form; expanded reachable states |
