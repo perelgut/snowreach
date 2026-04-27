@@ -51,11 +51,11 @@ public class RatingService {
 
     /**
      * Statuses from which a rating may be submitted.
-     * Ratings are meaningful at COMPLETE; we also allow them after auto-release
-     * (RELEASED, SETTLED) for goodwill feedback even though payment is already settled.
+     * Ratings are meaningful at COMPLETE (PENDING_APPROVAL); also allowed in DISPUTED
+     * (both parties can rate regardless of outcome) and after release/settlement.
      */
     private static final Set<String> RATEABLE_STATUSES =
-            Set.of("PENDING_APPROVAL", "RELEASED", "SETTLED");
+            Set.of("PENDING_APPROVAL", "DISPUTED", "RELEASED", "SETTLED");
 
     private final Firestore      firestore;
     private final JobService     jobService;

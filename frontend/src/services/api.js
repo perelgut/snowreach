@@ -402,3 +402,21 @@ export const exportTransactions = (from, to) =>
     params: { from, to, format: 'csv' },
     responseType: 'blob',
   }).then(r => r.data)
+
+/**
+ * Submit a rating for a completed job.
+ * Backend derives the raterRole from the caller's UID (REQUESTER or WORKER).
+ * @param {string} jobId
+ * @param {{ stars: number, reviewText?: string, wouldRepeat: boolean }} data
+ * @returns {Promise<Rating>}
+ */
+export const submitRating = (jobId, data) =>
+  api.post(`/api/jobs/${jobId}/rating`, data).then(r => r.data)
+
+/**
+ * Fetch all ratings for a job (0–2 documents: one per role).
+ * @param {string} jobId
+ * @returns {Promise<Rating[]>}
+ */
+export const getRatings = (jobId) =>
+  api.get(`/api/jobs/${jobId}/ratings`).then(r => r.data)

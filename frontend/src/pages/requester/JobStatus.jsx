@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   getJob, cancelJob, disputeJob,
   getOffersForJob, respondToOffer, approveJob,
-  getWorkerPublicProfile,
+  getWorkerPublicProfile, getRatings,
 } from '../../services/api'
 import StatusPill from '../../components/StatusPill'
 import Modal from '../../components/Modal'
@@ -71,6 +71,7 @@ export default function JobStatus() {
 
   const [job,          setJob]          = useState(null)
   const [worker,       setWorker]       = useState(null)
+  const [ratings,      setRatings]      = useState([])
   const [loading,      setLoading]      = useState(true)
   const [error,        setError]        = useState(null)
   const [submitting,   setSubmitting]   = useState(false)
@@ -112,6 +113,15 @@ export default function JobStatus() {
       .then(data => setWorker(data))
       .catch(err => console.error('[JobStatus] Failed to load worker profile:', err))
   }, [job?.workerId])
+
+  // Load ratings once the job reaches a rateable state
+  useEffect(() => {
+    const rateable = ['PENDING_APPROVAL', 'DISPUTED', 'RELEASED', 'SETTLED']
+    if (!job?.jobId || !rateable.includes(job.status)) { setRatings([]); return }
+    getRatings(job.jobId)
+      .then(data => setRatings(data ?? []))
+      .catch(() => {})
+  }, [job?.jobId, job?.status])
 
   // Load offers while the job is in the negotiation phase
   useEffect(() => {
@@ -285,7 +295,8 @@ export default function JobStatus() {
   const canCancel     = ['POSTED', 'NEGOTIATING', 'AGREED', 'ESCROW_HELD'].includes(job.status)
   const canDispute    = job.status === 'PENDING_APPROVAL'
   const canApprove    = job.status === 'PENDING_APPROVAL'
-  const canRate       = job.status === 'PENDING_APPROVAL'
+  const alreadyRated  = ratings.some(r => r.raterRole === 'REQUESTER')
+  const canRate       = ['PENDING_APPROVAL', 'DISPUTED', 'RELEASED', 'SETTLED'].includes(job.status) && !!job.workerId
   const showOffers    = ['POSTED', 'NEGOTIATING'].includes(job.status)
   const showPayment   = job.status === 'AGREED'
   const workerVisible = job.workerId && ['NEGOTIATING', 'AGREED', 'ESCROW_HELD', 'IN_PROGRESS',
@@ -581,24 +592,35 @@ export default function JobStatus() {
       </div>
 
       {/* PENDING_APPROVAL secondary actions (approve card shown above) */}
-      {canApprove && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', marginBottom: 'var(--sp-4)' }}>
-          {canRate && (
+      {canApprove && canDispute && (
+        <div style={{ marginBottom: 'var(--sp-4)' }}>
+          <button
+            className="btn btn-lg btn-full btn-secondary"
+            style={{ borderColor: 'var(--amber)', color: 'var(--amber)' }}
+            onClick={() => setDisputeOpen(true)}
+          >
+            ⚠ Raise a Dispute
+          </button>
+        </div>
+      )}
+
+      {/* Rate worker — available at any post-completion state */}
+      {canRate && (
+        <div style={{ marginBottom: 'var(--sp-4)' }}>
+          {alreadyRated ? (
+            <button
+              className="btn btn-lg btn-full btn-secondary"
+              onClick={() => navigate(`/requester/jobs/${job.jobId}/rate`)}
+            >
+              ★ View Your Rating
+            </button>
+          ) : (
             <button
               className="btn btn-lg btn-full"
-              style={{ background: 'var(--green)', color: '#fff' }}
+              style={{ background: '#F6AD55', color: '#fff', border: 'none' }}
               onClick={() => navigate(`/requester/jobs/${job.jobId}/rate`)}
             >
               ★ Rate Your Worker
-            </button>
-          )}
-          {canDispute && (
-            <button
-              className="btn btn-lg btn-full btn-secondary"
-              style={{ borderColor: 'var(--amber)', color: 'var(--amber)' }}
-              onClick={() => setDisputeOpen(true)}
-            >
-              ⚠ Raise a Dispute
             </button>
           )}
         </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { listJobs, startJob, completeJob, uploadJobPhoto } from '../../services/api'
+import { listJobs, startJob, completeJob, uploadJobPhoto, submitRating, getRatings } from '../../services/api'
 import StatusPill from '../../components/StatusPill'
 
 // Format a CAD amount (double from backend)
@@ -18,8 +18,10 @@ function fmtTimestamp(ts) {
   } catch { return String(ts) }
 }
 
-// Statuses considered "active" for the worker
-const ACTIVE_STATUSES = ['ESCROW_HELD', 'IN_PROGRESS', 'PENDING_APPROVAL']
+const STAR_LABELS = ['', 'Poor', 'Fair', 'Good', 'Great', 'Excellent!']
+
+// Statuses where the worker has completed work and can rate the requester
+const RATEABLE_STATUSES = ['PENDING_APPROVAL', 'DISPUTED', 'RELEASED', 'SETTLED']
 
 export default function ActiveJob() {
   const [job,            setJob]            = useState(null)
@@ -28,19 +30,41 @@ export default function ActiveJob() {
   const [photoUploading, setPhotoUploading] = useState(false)
   const [submitting,     setSubmitting]     = useState(false)
 
+  // Rating state
+  const [ratingStars,    setRatingStars]    = useState(0)
+  const [ratingHover,    setRatingHover]    = useState(0)
+  const [ratingText,     setRatingText]     = useState('')
+  const [wouldRepeat,    setWouldRepeat]    = useState(null)
+  const [ratingSubmitting, setRatingSubmitting] = useState(false)
+  const [ratingSubmitted,  setRatingSubmitted]  = useState(false)
+  const [ratingError,    setRatingError]    = useState('')
+  const [alreadyRated,   setAlreadyRated]   = useState(false)
+
   // Load worker's active or recently completed job on mount
   useEffect(() => {
     listJobs()
       .then(jobs => {
         if (!Array.isArray(jobs)) return
-        // Prefer an active status job; fall back to most recent PENDING_APPROVAL
-        const active   = jobs.find(j => ['ESCROW_HELD', 'IN_PROGRESS'].includes(j.status))
-        const complete = jobs.find(j => j.status === 'PENDING_APPROVAL')
-        setJob(active ?? complete ?? null)
+        // Prefer truly active; fall back to most recently completed/disputed
+        const active    = jobs.find(j => ['ESCROW_HELD', 'IN_PROGRESS'].includes(j.status))
+        const completed = jobs.find(j => RATEABLE_STATUSES.includes(j.status))
+        setJob(active ?? completed ?? null)
       })
       .catch(err => console.error('[ActiveJob] Failed to load jobs:', err))
       .finally(() => setLoading(false))
   }, [])
+
+  // Check if the worker already rated this job
+  useEffect(() => {
+    if (!job?.jobId || !RATEABLE_STATUSES.includes(job.status)) return
+    getRatings(job.jobId)
+      .then(data => {
+        const rated = (data ?? []).some(r => r.raterRole === 'WORKER')
+        setAlreadyRated(rated)
+        if (rated) setRatingSubmitted(true)
+      })
+      .catch(() => {})
+  }, [job?.jobId, job?.status])
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -85,6 +109,27 @@ export default function ActiveJob() {
     }
   }
 
+  async function handleRateRequester() {
+    if (ratingStars === 0) { setRatingError('Please select a star rating.'); return }
+    if (wouldRepeat === null) { setRatingError('Please answer "Would you work for them again?"'); return }
+    setRatingError('')
+    setRatingSubmitting(true)
+    try {
+      await submitRating(job.jobId, {
+        stars: ratingStars,
+        reviewText: ratingText.trim() || undefined,
+        wouldRepeat,
+      })
+      setRatingSubmitted(true)
+      setAlreadyRated(true)
+    } catch (err) {
+      const msg = err.response?.data?.message || err.message || 'Failed to submit rating.'
+      setRatingError(msg)
+    } finally {
+      setRatingSubmitting(false)
+    }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (loading) return (
@@ -108,7 +153,11 @@ export default function ActiveJob() {
   )
 
   const isPendingApproval = job.status === 'PENDING_APPROVAL'
-  const bannerBg = isPendingApproval ? 'var(--color-success)' : 'var(--color-primary)'
+  const isDisputedOrDone  = ['DISPUTED', 'RELEASED', 'SETTLED'].includes(job.status)
+  const canRateNow        = RATEABLE_STATUSES.includes(job.status) && !alreadyRated
+  const bannerBg = isPendingApproval || isDisputedOrDone
+    ? 'var(--color-success)'
+    : 'var(--color-primary)'
 
   return (
     <div style={{ maxWidth: 480, margin: '0 auto' }}>
@@ -123,6 +172,9 @@ export default function ActiveJob() {
               {job.status === 'ESCROW_HELD'      && '🚗 Head to the property'}
               {job.status === 'IN_PROGRESS'      && '❄️ Clearing in progress'}
               {job.status === 'PENDING_APPROVAL' && '✅ Work submitted — awaiting homeowner approval'}
+              {job.status === 'DISPUTED'         && '⚠️ Dispute raised — admin is reviewing'}
+              {job.status === 'RELEASED'         && '💰 Payment released — job complete'}
+              {job.status === 'SETTLED'          && '✅ Job settled by admin'}
             </div>
           </div>
           <StatusPill status={job.status} labelOverrides={{ RELEASED: 'Completed & Paid', SETTLED: 'Completed & Paid' }} />
@@ -247,7 +299,7 @@ export default function ActiveJob() {
 
       {/* PENDING_APPROVAL: waiting for homeowner */}
       {job.status === 'PENDING_APPROVAL' && (
-        <div className="card" style={{ textAlign: 'center', background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+        <div className="card" style={{ textAlign: 'center', background: '#F0FDF4', border: '1px solid #BBF7D0', marginBottom: 'var(--sp-4)' }}>
           <div style={{ fontSize: 40, marginBottom: 8 }}>🎉</div>
           <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--green)', marginBottom: 4 }}>Work submitted!</div>
           <div style={{ fontSize: 13, color: 'var(--gray-500)', marginBottom: 8 }}>
@@ -256,6 +308,104 @@ export default function ActiveJob() {
           <div style={{ fontSize: 13, color: 'var(--gray-600)', fontWeight: 600 }}>
             Payment of {fmtCAD(job.workerPayoutCAD)} releases automatically after approval.
           </div>
+        </div>
+      )}
+
+      {/* DISPUTED: admin reviewing */}
+      {job.status === 'DISPUTED' && (
+        <div className="card" style={{ textAlign: 'center', background: '#FFFBEB', border: '1px solid #FDE68A', marginBottom: 'var(--sp-4)' }}>
+          <div style={{ fontSize: 40, marginBottom: 8 }}>⚠️</div>
+          <div style={{ fontWeight: 800, fontSize: 16, color: '#D97706', marginBottom: 4 }}>Dispute in progress</div>
+          <div style={{ fontSize: 13, color: 'var(--gray-500)' }}>
+            The homeowner raised a dispute. Our admin team will review and reach out within 24 hours.
+          </div>
+        </div>
+      )}
+
+      {/* RELEASED / SETTLED */}
+      {(job.status === 'RELEASED' || job.status === 'SETTLED') && (
+        <div className="card" style={{ textAlign: 'center', background: '#F0FDF4', border: '1px solid #BBF7D0', marginBottom: 'var(--sp-4)' }}>
+          <div style={{ fontSize: 40, marginBottom: 8 }}>💰</div>
+          <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--green)', marginBottom: 4 }}>
+            {job.status === 'SETTLED' ? 'Job settled' : 'Payment released'}
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--gray-600)', fontWeight: 600 }}>
+            {fmtCAD(job.workerPayoutCAD)} sent to your account.
+          </div>
+        </div>
+      )}
+
+      {/* Rate the Requester — shown once work is complete */}
+      {RATEABLE_STATUSES.includes(job.status) && (
+        <div className="card">
+          <h2 style={{ fontWeight: 700, fontSize: 15, marginBottom: 'var(--sp-4)' }}>Rate this homeowner</h2>
+
+          {ratingSubmitted ? (
+            <div style={{ textAlign: 'center', padding: 'var(--sp-4) 0' }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>✓</div>
+              <div style={{ fontWeight: 700, color: 'var(--green)' }}>Rating submitted — thanks!</div>
+            </div>
+          ) : (
+            <>
+              {/* Star widget */}
+              <div style={{ display: 'flex', gap: 6, marginBottom: 'var(--sp-3)' }}>
+                {[1, 2, 3, 4, 5].map(n => (
+                  <button key={n} type="button"
+                    onClick={() => setRatingStars(n)}
+                    onMouseEnter={() => setRatingHover(n)}
+                    onMouseLeave={() => setRatingHover(0)}
+                    aria-label={`${n} star${n > 1 ? 's' : ''}`}
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      fontSize: 36, lineHeight: 1, padding: 2,
+                      color: n <= (ratingHover || ratingStars) ? '#F6AD55' : 'var(--gray-200)',
+                      transition: 'color .1s, transform .1s',
+                      transform: n <= (ratingHover || ratingStars) ? 'scale(1.15)' : 'scale(1)',
+                    }}
+                  >★</button>
+                ))}
+              </div>
+              {(ratingHover || ratingStars) > 0 && (
+                <div style={{ fontSize: 13, color: 'var(--gray-500)', marginBottom: 'var(--sp-3)' }}>
+                  {STAR_LABELS[ratingHover || ratingStars]}
+                </div>
+              )}
+
+              <div className="field">
+                <label className="label">Leave a comment (optional)</label>
+                <textarea className="input" rows={3}
+                  placeholder="Was the property accessible? Clear instructions? Paid promptly?"
+                  value={ratingText}
+                  onChange={e => setRatingText(e.target.value)}
+                  maxLength={500}
+                />
+                <span style={{ fontSize: 11, color: 'var(--gray-400)', textAlign: 'right' }}>{ratingText.length}/500</span>
+              </div>
+
+              <div style={{ marginBottom: 'var(--sp-4)' }}>
+                <div className="label" style={{ marginBottom: 8 }}>Would you work for them again?</div>
+                <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
+                  {[{ val: true, label: '👍 Yes' }, { val: false, label: '👎 No' }].map(({ val, label }) => (
+                    <button key={String(val)} type="button"
+                      onClick={() => setWouldRepeat(wouldRepeat === val ? null : val)}
+                      className="btn"
+                      style={{
+                        background: wouldRepeat === val ? (val ? 'var(--green-bg)' : 'var(--red-bg)') : 'var(--gray-100)',
+                        color:      wouldRepeat === val ? (val ? 'var(--green)'    : 'var(--red)')    : 'var(--gray-600)',
+                        border: `1.5px solid ${wouldRepeat === val ? (val ? 'var(--green)' : 'var(--red)') : 'var(--gray-200)'}`,
+                        fontWeight: 600,
+                      }}
+                    >{label}</button>
+                  ))}
+                </div>
+              </div>
+
+              {ratingError && <div className="alert alert-error" style={{ marginBottom: 'var(--sp-3)' }}>{ratingError}</div>}
+              <button className="btn btn-primary btn-full" onClick={handleRateRequester} disabled={ratingSubmitting}>
+                {ratingSubmitting ? 'Submitting…' : 'Submit Rating'}
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
