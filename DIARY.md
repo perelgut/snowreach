@@ -4825,3 +4825,81 @@ Every attempt to post a job returned 422. Two issues compounded each other:
 |---|---|
 | `frontend/src/services/api.js` | Response interceptor normalises RFC 7807 `detail` → `message` |
 | `MAPS_API_KEY` (GCP secret) | Version 2 written without BOM |
+
+---
+
+## 2026-04-27 — Feature: Real address validation at Post Job Step 1 + geocoding failure modal at Step 4
+
+### Context
+
+When `POST /api/jobs` returned a 422 "Could not resolve the property address", the user had to manually navigate back through three steps to fix the address — a poor experience. The "Validating address…" UI at Step 1 was a fake `setTimeout` that always succeeded.
+
+User request (verbatim): "when a user enters an address, check if that address can be resolved and refuse to move on until there's a resolved address; also, when this message occurs, pop up a single 'enter address again' prompt. Would it help to force the user to enter a postal code when entering an address — make it a separate field?"
+
+After brainstorming three approaches (A: validate only on manual entry; B: validate only on job submit with modal; C: validate at Step 1 + modal safety net at Step 4), user chose **C — validate at Step 1 in both modes, with a modal fallback at Step 4**.
+
+Key design decisions:
+- **No "continue anyway" option** — the address must resolve before advancing to Step 2. This applies to both manual entry and stored home address flows.
+- **Stored address flow failure**: switches the form to manual entry mode pre-filled with the stored address parts (best-effort parsing) so the user can correct and revalidate. User rationale: "shouldn't we require them to 'please check the street number…'"
+- **Section 1 (backend)** approved by user first, then Section 2 (Step 1 frontend), then Section 3 (Step 4 modal), then full spec.
+- User chose **inline execution** (executing-plans skill) over subagent-driven.
+
+### Implementation
+
+**Task 1 — Backend: `POST /api/address/validate` (TDD)**
+
+New endpoint following the design spec exactly. The controller always returns HTTP 200; an unresolvable address is a user input problem, not a server error.
+
+- `AddressValidateRequest.java`: `@NotBlank` `addressText` field — returns 400 if missing/blank.
+- `AddressValidateResponse.java`: `{ valid: boolean, resolvedAddress: String|null }`.
+- `AddressControllerTest.java`: 4 `@WebMvcTest` tests — resolvable → valid:true+resolvedAddress, unresolvable → valid:false+no resolvedAddress, missing field → 400, unauthenticated → 401. All written before the controller.
+- `AddressController.java`: calls `GeocodingService.geocode()` directly; catches `GeocodingException` and returns `valid:false`. No service layer needed.
+- All 4 tests passed; full suite 159/159 green.
+- Committed: `feat: POST /api/address/validate endpoint with TDD`
+
+**Task 2 — `validateAddress` in api.js**
+
+Added `validateAddress(addressText)` export that calls `POST /api/address/validate` with `{ addressText }` and returns `r.data`.
+
+**Task 3 — PostJob.jsx: real Step 1 validation**
+
+Replaced fake `nextStep1()` `setTimeout` with an async function that:
+1. Clears `addrError`.
+2. For the home-address mode: calls `validateAddress(userProfile.homeAddressText)`; on failure switches to manual mode and pre-fills form fields from `prefillFromStoredAddress()`, sets `addrError`.
+3. For manual mode: runs local format checks first (unchanged), then calls `validateAddress(enteredAddress)`; on failure sets `addrError`; on success advances to Step 2.
+4. Network errors show "Address validation is temporarily unavailable. Please try again."
+
+`prefillFromStoredAddress(text)` is a best-effort parser that splits on commas and regexes out unit/street number/street name/city/province/postal code. Good enough for typical "123 Main St, Toronto, ON M5V 3A8" and "Unit 4B, 123 Main St, Toronto, ON M5V 3A8" formats.
+
+Removed `searching` / `found` state; replaced with `validating` / `addrError`. Button shows "Validating…" and is disabled while the call is in flight.
+
+**Task 4 — PostJob.jsx: Step 4 geocoding failure modal**
+
+In `submit()` catch block: if the response is 422 and the message contains "Could not resolve the property address", sets `addrModal = true` instead of adding to `errors`. All other errors continue as before.
+
+Modal uses the existing `Modal` component with:
+- Title: "Address not recognised"
+- Body: "Your property address couldn't be verified. Please go back and check it."
+- Single footer button "Fix Address": closes modal and calls `setStep(1)`.
+
+**Task 5 — Push**
+
+Commits pushed to `main`. CI/CD redeploy triggered.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `backend/src/main/java/com/yosnowmow/dto/AddressValidateRequest.java` | New DTO |
+| `backend/src/main/java/com/yosnowmow/dto/AddressValidateResponse.java` | New DTO |
+| `backend/src/main/java/com/yosnowmow/controller/AddressController.java` | New controller |
+| `backend/src/test/java/com/yosnowmow/controller/AddressControllerTest.java` | New test class (4 tests, written first) |
+| `frontend/src/services/api.js` | Added `validateAddress()` export |
+| `frontend/src/pages/requester/PostJob.jsx` | Real Step 1 geocode validation; prefillFromStoredAddress helper; Step 4 modal |
+| `docs/superpowers/specs/2026-04-27-address-validation-design.md` | Design spec |
+| `docs/superpowers/plans/2026-04-27-address-validation.md` | Implementation plan |
+
+### Commits
+
+- `feat: POST /api/address/validate endpoint with TDD`
+- `feat: real address validation at Post Job Step 1 with Step 4 modal fallback`
