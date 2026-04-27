@@ -160,6 +160,14 @@ export const postJob = (data) =>
   api.post('/api/jobs', data).then(r => r.data)
 
 /**
+ * Validate that an address string can be geocoded.
+ * @param {string} addressText
+ * @returns {Promise<{ valid: boolean, resolvedAddress?: string }>}
+ */
+export const validateAddress = (addressText) =>
+  api.post('/api/address/validate', { addressText }).then(r => r.data)
+
+/**
  * List jobs for the current user (requester sees their own jobs; admin sees all).
  * @param {{ status?: string, page?: number, size?: number }} params
  * @returns {Promise<Job[]>}

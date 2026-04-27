@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { postJob } from '../../services/api'
+import { postJob, validateAddress } from '../../services/api'
 import useAuth from '../../hooks/useAuth'
+import Modal from '../../components/Modal'
 
 const SERVICES = [
   {
@@ -55,8 +56,9 @@ export default function PostJob() {
   const [useHomeAddr, setUseHomeAddr] = useState(true) // default to home address when available
   const [step, setStep] = useState(1)
   const [submitting, setSubmitting] = useState(false)
-  const [searching, setSearching] = useState(false)
-  const [found, setFound] = useState(false)
+  const [validating, setValidating] = useState(false)
+  const [addrError, setAddrError] = useState(null)
+  const [addrModal, setAddrModal] = useState(false)
   const [form, setForm] = useState({
     unitNumber: '', streetNumber: '', streetName: '',
     city: '', province: 'ON', postalCode: '',
@@ -99,13 +101,31 @@ export default function PostJob() {
 
   const CA_POSTAL = /^[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d$/
 
-  function nextStep1() {
-    // Skip address form validation when using the stored home address
+  async function nextStep1() {
+    setAddrError(null)
+
     if (hasHomeAddress && useHomeAddr) {
-      setErrors({})
-      setStep(2)
+      // Validate the stored home address — it was resolved once but may have changed
+      setValidating(true)
+      try {
+        const result = await validateAddress(userProfile.homeAddressText)
+        if (!result.valid) {
+          // Switch to manual entry pre-filled with the stored address parts
+          setUseHomeAddr(false)
+          prefillFromStoredAddress(userProfile.homeAddressText)
+          setAddrError("We couldn't resolve your stored home address — please check the street number, street name, city, and postal code")
+          return
+        }
+        setStep(2)
+      } catch {
+        setAddrError('Address validation is temporarily unavailable. Please try again.')
+      } finally {
+        setValidating(false)
+      }
       return
     }
+
+    // Manual address — run local format checks first
     const e = {}
     if (!form.streetNumber.trim()) e.streetNumber = 'Street number is required'
     if (!form.streetName.trim())   e.streetName   = 'Street name is required'
@@ -114,9 +134,50 @@ export default function PostJob() {
     else if (!CA_POSTAL.test(form.postalCode.trim())) e.postalCode = 'Enter a valid Canadian postal code (e.g. M5V 3A8)'
     if (Object.keys(e).length) { setErrors(e); return }
     setErrors({})
-    setSearching(true)
-    setTimeout(() => { setSearching(false); setFound(true) }, 1200)
-    setTimeout(() => setStep(2), 1800)
+
+    setValidating(true)
+    try {
+      const result = await validateAddress(enteredAddress)
+      if (!result.valid) {
+        setAddrError("We couldn't resolve this address — please check the street number, street name, city, and postal code")
+        return
+      }
+      setStep(2)
+    } catch {
+      setAddrError('Address validation is temporarily unavailable. Please try again.')
+    } finally {
+      setValidating(false)
+    }
+  }
+
+  // Best-effort parser for stored address strings like
+  // "123 Main St, Toronto, ON M5V 3A8" or "Unit 4, 123 Main St, Toronto, ON M5V 3A8"
+  function prefillFromStoredAddress(text) {
+    if (!text) return
+    const parts = text.split(',').map(p => p.trim())
+    // Last part: "ON M5V 3A8"
+    const lastPart = parts[parts.length - 1] || ''
+    const provincePostal = lastPart.match(/^([A-Z]{2})\s+(.+)$/)
+    if (provincePostal) {
+      set('province', provincePostal[1])
+      set('postalCode', provincePostal[2])
+    }
+    // Second-to-last: city
+    if (parts.length >= 3) set('city', parts[parts.length - 2])
+    // First part: "Unit 4B, 123 Main St" or "123 Main St"
+    const addrPart = parts[0] || ''
+    const unitMatch = addrPart.match(/^[Uu]nit\s+(\S+),\s*(\d+)\s+(.+)$/)
+    if (unitMatch) {
+      set('unitNumber', unitMatch[1])
+      set('streetNumber', unitMatch[2])
+      set('streetName', unitMatch[3])
+    } else {
+      const streetMatch = addrPart.match(/^(\d+)\s+(.+)$/)
+      if (streetMatch) {
+        set('streetNumber', streetMatch[1])
+        set('streetName', streetMatch[2])
+      }
+    }
   }
 
   function nextStep2() {
@@ -175,7 +236,11 @@ export default function PostJob() {
         || (typeof data === 'string' ? data : null)
         || err.message
         || 'Failed to post job. Please try again.'
-      setErrors({ submit: msg })
+      if (err.response?.status === 422 && msg?.includes('Could not resolve the property address')) {
+        setAddrModal(true)
+      } else {
+        setErrors({ submit: msg })
+      }
       setSubmitting(false)
     }
   }
@@ -188,6 +253,19 @@ export default function PostJob() {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto' }}>
+      <Modal
+        isOpen={addrModal}
+        onClose={() => setAddrModal(false)}
+        title="Address not recognised"
+        footer={
+          <button className="btn btn-primary" onClick={() => { setAddrModal(false); setStep(1) }}>
+            Fix Address
+          </button>
+        }
+      >
+        Your property address couldn&apos;t be verified. Please go back and check it.
+      </Modal>
+
       <h1 style={{ fontSize: 'var(--text-xl)', fontWeight: 800, marginBottom: 'var(--sp-6)' }}>Post a Job</h1>
 
       {/* Step indicator */}
@@ -283,12 +361,12 @@ export default function PostJob() {
                 </select>
               </div>
 
-              {found    && <div className="alert alert-success">✓ Address confirmed — Workers will be matched when you post</div>}
-              {searching && <div className="alert alert-info">Validating address…</div>}
             </>
           )}
-          <button className="btn btn-primary btn-full btn-lg" onClick={nextStep1} disabled={searching}>
-            {searching ? 'Searching…' : 'Next →'}
+          {addrError && <div className="alert alert-error">{addrError}</div>}
+          {validating && <div className="alert alert-info">Validating address…</div>}
+          <button className="btn btn-primary btn-full btn-lg" onClick={nextStep1} disabled={validating}>
+            {validating ? 'Validating…' : 'Next →'}
           </button>
         </div>
       )}
