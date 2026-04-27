@@ -137,7 +137,7 @@ export default function Signup() {
             placeholder="Jane Smith" required disabled={submitting} />
 
           <Input label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)}
-            placeholder="you@example.com" required disabled={submitting} />
+            placeholder="you@example.com" autoComplete="username" required disabled={submitting} />
 
           <Input label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)}
             placeholder="At least 6 characters" autoComplete="new-password" required disabled={submitting} />

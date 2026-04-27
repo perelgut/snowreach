@@ -723,20 +723,19 @@ public class JobService {
 
     /**
      * Retrieves a job and validates the caller is allowed to see it.
-     * Requester sees own jobs; assigned Worker sees their job; matched Workers (in
-     * matchedWorkerIds) can read POSTED/NEGOTIATING jobs so they can submit offers;
-     * Admin sees all.
+     * Requester sees own jobs; assigned Worker sees their job; any Worker may read
+     * POSTED/NEGOTIATING jobs to browse and submit offers; Admin sees all.
+     * The controller strips address/coords from Workers until CONFIRMED.
      */
     public Job getJobForCaller(String jobId, AuthenticatedUser caller) {
         Job job = getJob(jobId);
-        boolean isRequester    = job.getRequesterId().equals(caller.uid());
-        boolean isAssigned     = caller.uid().equals(job.getWorkerId());
-        boolean isMatchedWorker = caller.hasRole("worker")
-                && job.getMatchedWorkerIds() != null
-                && job.getMatchedWorkerIds().contains(caller.uid());
-        boolean isAdmin        = caller.hasRole("admin");
+        boolean isRequester         = job.getRequesterId().equals(caller.uid());
+        boolean isAssigned          = caller.uid().equals(job.getWorkerId());
+        boolean isBrowsableByWorker = caller.hasRole("worker")
+                && ("POSTED".equals(job.getStatus()) || "NEGOTIATING".equals(job.getStatus()));
+        boolean isAdmin             = caller.hasRole("admin");
 
-        if (!isRequester && !isAssigned && !isMatchedWorker && !isAdmin) {
+        if (!isRequester && !isAssigned && !isBrowsableByWorker && !isAdmin) {
             throw new org.springframework.security.access.AccessDeniedException(
                     "You do not have access to this job");
         }
