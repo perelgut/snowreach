@@ -200,6 +200,10 @@ export default function Analytics() {
   const totalHst     = (totalGross != null && totalPlatform != null && totalWorker != null)
     ? Number(totalGross) - Number(totalPlatform) - Number(totalWorker)
     : null
+  // Net gross = gross minus HST — what the platform and worker actually earned
+  const netGross     = (totalGross != null && totalHst != null)
+    ? Number(totalGross) - Number(totalHst)
+    : null
   const avgRating    = summary?.overallAverageRating
 
   // ── Chart data ──────────────────────────────────────────────────────────────
@@ -272,14 +276,14 @@ export default function Analytics() {
     scales: { x: { stacked: true }, y: { stacked: true } },
   }
 
-  const hasRevenuePie = totalPlatform != null && totalWorker != null && totalHst != null
+  const hasRevenuePie = totalPlatform != null && totalWorker != null && netGross != null
   const pieData = {
-    labels: ['Platform Revenue', 'Worker Payouts', 'HST Collected'],
+    labels: ['Platform Fee', 'Worker Payout'],
     datasets: [{
       data: hasRevenuePie
-        ? [Number(totalPlatform) / 100, Number(totalWorker) / 100, Number(totalHst) / 100]
-        : [0, 0, 0],
-      backgroundColor: [BLUE, GREEN, PURPLE],
+        ? [Number(totalPlatform) / 100, Number(totalWorker) / 100]
+        : [0, 0],
+      backgroundColor: [BLUE, GREEN],
       borderWidth: 2,
       borderColor: '#fff',
     }],
@@ -426,7 +430,7 @@ export default function Analytics() {
           }
         </ChartCard>
 
-        <ChartCard title="Revenue Distribution (All Time)">
+        <ChartCard title="Platform vs Worker Revenue, net of HST (All Time)">
           {!hasRevenuePie
             ? <NoData />
             : <div style={{ height: 280 }}><Pie data={pieData} options={pieOptions} /></div>
