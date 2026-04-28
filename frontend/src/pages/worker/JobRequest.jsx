@@ -231,7 +231,7 @@ export default function JobRequest() {
               job={jobCache[offer.jobId]}
               submitting={submitting === offer.jobId}
               onAccept={priceCents => handleAccept(offer.jobId, priceCents)}
-              onCounter={() => openCounterModal(offer.jobId, offer.workerPriceCents, 'respond')}
+              onCounter={() => openCounterModal(offer.jobId, offer.requesterPriceCents ?? offer.workerPriceCents, 'respond')}
               onWithdraw={() => handleWithdraw(offer.jobId)}
             />
           ))}

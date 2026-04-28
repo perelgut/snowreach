@@ -5165,3 +5165,33 @@ Validation in `nextStep2()`: if the toggle is on but the input is empty or below
 |---|---|
 | `frontend/src/pages/worker/JobRequest.jsx` | Added `useNavigate` import; `OfferCard` uses it to render "Go to Active Job →" button when `job.status === 'ESCROW_HELD'` |
 | `frontend/src/pages/requester/PostJob.jsx` | Added `useCustomPrice`/`customPriceInput` state, `postedPrice` derived value, custom-fee toggle UI in Step 2, validation, and `postedPrice` used in submit + Step 4 review |
+
+---
+
+## 2026-04-28 — Fix: Worker counter-offer modal pre-fills own price instead of requester's counter
+
+### Problem
+
+After a Requester counters a Worker's offer (e.g., requester counters at $40 on a $65 offer), the Worker sees the "Counter Again" button. Clicking it opens the counter modal, but the modal was pre-filled with `offer.workerPriceCents` ($65) — the Worker's own previous price — rather than `offer.requesterPriceCents` ($40) — the Requester's current counter.
+
+Consequence: the modal reference text said "After requester's counter of $65.00" (wrong), and the price input showed $65. If the Worker submitted without noticing, they'd re-counter at $65, silently overriding the Requester's $40 proposal.
+
+### Fix
+
+In `JobRequest.jsx`, the `onCounter` prop on `OfferCard` for active offers changed:
+
+```javascript
+// Before (wrong — uses worker's own price as reference)
+onCounter={() => openCounterModal(offer.jobId, offer.workerPriceCents, 'respond')}
+
+// After — uses requester's counter price; falls back to workerPriceCents if not set
+onCounter={() => openCounterModal(offer.jobId, offer.requesterPriceCents ?? offer.workerPriceCents, 'respond')}
+```
+
+The fallback `?? offer.workerPriceCents` is defensive; in practice `requesterPriceCents` is always set by the time the "Counter Again" button is visible (the button only renders when `needsResponse && offer.requesterPriceCents != null`).
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `frontend/src/pages/worker/JobRequest.jsx` | `onCounter` prop now passes `offer.requesterPriceCents` as the reference price to the counter modal |
