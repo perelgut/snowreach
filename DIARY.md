@@ -5132,3 +5132,36 @@ Rewrote `WorkerProfile.jsx` to accept `worker` (the public profile already loade
 |---|---|
 | `frontend/src/pages/requester/WorkerProfile.jsx` | Replaced mock constants with real props; added "Your Review" card |
 | `frontend/src/pages/requester/JobStatus.jsx` | Passes `worker` and `ratings` to `WorkerProfileModal` |
+
+---
+
+## 2026-04-28 — Feature: Worker ESCROW_HELD shortcut + Requester custom fee
+
+### Two independent UI improvements
+
+#### 1. Worker — "Go to Active Job" button on ESCROW_HELD
+
+**Problem:** After a worker accepts a job offer and the requester pays escrow, the job transitions to `ESCROW_HELD`. The worker was left on the Job Offers page with a green "Waiting for escrow" banner and no way to navigate to the Active Job page without manually tapping through the worker nav.
+
+**Fix:** In `OfferCard` (inside `JobRequest.jsx`), the `isAccepted` state block now branches on `job?.status`:
+- If `ESCROW_HELD`: shows updated green banner ("Escrow paid — ready to start!") plus a blue "Go to Active Job →" button that navigates to `/worker/active-job`.
+- Otherwise: shows the existing "Waiting for homeowner to pay escrow" banner.
+
+Added `useNavigate` import from `react-router-dom`. The `OfferCard` component already receives the `job` object (from `jobCache`) as a prop, so `job?.status` is always available for the comparison.
+
+#### 2. Requester — "Propose a different fee" in PostJob wizard
+
+**Problem:** The PostJob wizard computed an opening offer price based on selected services and sizes, but the requester had no way to propose a different starting price. This limited flexibility for requesters who know the local market or have a specific budget.
+
+**Fix:** Added two new state variables (`useCustomPrice`, `customPriceInput`) and derived `customPriceCents` / `postedPrice` from them. `postedPrice = customPriceCents ?? basePrice` — so all financial display (HST, platform fee, worker net, total) updates live as the user types.
+
+In Step 2, after the fee summary box, a "Propose a different fee" checkbox toggle reveals a `$` + number input (min $1.00, 2 decimal places). When enabled, the fee summary relabels its first row from "Services subtotal" to "Your custom fee" and shows an "Est. based on services" reference row so the user can compare. In Step 4 (Review), "Your opening offer" shows the effective posted price.
+
+Validation in `nextStep2()`: if the toggle is on but the input is empty or below $1.00, an error prevents advancing. On submit, `postedPriceCents: postedPrice` is sent to the API (was `basePrice`).
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `frontend/src/pages/worker/JobRequest.jsx` | Added `useNavigate` import; `OfferCard` uses it to render "Go to Active Job →" button when `job.status === 'ESCROW_HELD'` |
+| `frontend/src/pages/requester/PostJob.jsx` | Added `useCustomPrice`/`customPriceInput` state, `postedPrice` derived value, custom-fee toggle UI in Step 2, validation, and `postedPrice` used in submit + Step 4 review |

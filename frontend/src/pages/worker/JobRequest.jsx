@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore'
 import { db } from '../../services/firebase'
 import { getJob, submitOffer } from '../../services/api'
@@ -459,6 +460,7 @@ function OpportunityCard({ notif, job, submitting, onAccept, onCounter }) {
  * Card for an already-submitted offer, showing its current status.
  */
 function OfferCard({ offer, job, submitting, onAccept, onCounter, onWithdraw }) {
+  const navigate      = useNavigate()
   const hasJob        = job && !job._error
   const needsResponse = NEEDS_RESPONSE.has(offer.status)
   const isAccepted    = offer.status === 'ACCEPTED'
@@ -540,10 +542,26 @@ function OfferCard({ offer, job, submitting, onAccept, onCounter, onWithdraw }) 
         </button>
       )}
 
-      {/* Agreed state — waiting for escrow */}
+      {/* Agreed state — waiting for escrow, or escrow paid and ready to start */}
       {isAccepted && (
-        <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, padding: '10px 12px', marginTop: 'var(--sp-2)', fontSize: 13, color: '#059669' }}>
-          ✓ Agreed at {fmtCAD(offer.workerPriceCents)}. Waiting for the homeowner to pay escrow — you'll be notified when the job is confirmed.
+        <div style={{ marginTop: 'var(--sp-2)' }}>
+          {job?.status === 'ESCROW_HELD' ? (
+            <>
+              <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, padding: '10px 12px', marginBottom: 'var(--sp-2)', fontSize: 13, color: '#059669' }}>
+                ✓ Agreed at {fmtCAD(offer.workerPriceCents)}. Escrow paid — ready to start!
+              </div>
+              <button
+                className="btn btn-primary btn-full"
+                onClick={() => navigate('/worker/active-job')}
+              >
+                Go to Active Job →
+              </button>
+            </>
+          ) : (
+            <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, padding: '10px 12px', fontSize: 13, color: '#059669' }}>
+              ✓ Agreed at {fmtCAD(offer.workerPriceCents)}. Waiting for the homeowner to pay escrow — you'll be notified when the job is confirmed.
+            </div>
+          )}
         </div>
       )}
     </div>

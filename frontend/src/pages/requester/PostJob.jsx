@@ -57,6 +57,8 @@ export default function PostJob() {
   const [step, setStep] = useState(1)
   const [submitting, setSubmitting] = useState(false)
   const [validating, setValidating] = useState(false)
+  const [useCustomPrice, setUseCustomPrice] = useState(false)
+  const [customPriceInput, setCustomPriceInput] = useState('')
   const [addrError, setAddrError] = useState(null)
   const [addrModal, setAddrModal] = useState(false)
   const [form, setForm] = useState({
@@ -94,10 +96,13 @@ export default function PostJob() {
     const sizeObj = s.sizes.find(sz => sz.key === form.services[s.key])
     return a + (sizeObj ? sizeObj.price : 0)
   }, 0)
-  const hst = Math.round(basePrice * 0.13)
-  const fee = Math.round(basePrice * 0.15)
-  const total = basePrice + hst
-  const workerNet = basePrice - fee + hst
+  const customPriceCents = useCustomPrice && customPriceInput
+    ? Math.round(parseFloat(customPriceInput) * 100) : null
+  const postedPrice = (customPriceCents != null && customPriceCents > 0) ? customPriceCents : basePrice
+  const hst = Math.round(postedPrice * 0.13)
+  const fee = Math.round(postedPrice * 0.15)
+  const total = postedPrice + hst
+  const workerNet = postedPrice - fee + hst
 
   const CA_POSTAL = /^[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d$/
 
@@ -182,6 +187,10 @@ export default function PostJob() {
 
   function nextStep2() {
     if (!selectedServices.length) { setErrors({ services: 'Select at least one service' }); return }
+    if (useCustomPrice && (!customPriceCents || customPriceCents < 100)) {
+      setErrors({ customPrice: 'Please enter a valid amount (minimum $1.00)' })
+      return
+    }
     setErrors({})
     setStep(3)
   }
@@ -225,7 +234,7 @@ export default function PostJob() {
         startWindowLatest:    null,
         notesForWorker,
         personalWorkerOnly:   false,
-        postedPriceCents:     basePrice,
+        postedPriceCents:     postedPrice,
       })
 
       navigate(`/requester/jobs/${job.jobId}`)
@@ -429,10 +438,16 @@ export default function PostJob() {
           </div>
 
           {basePrice > 0 && (
-            <div style={{ background: 'var(--gray-100)', borderRadius: 8, padding: 'var(--sp-4)', marginBottom: 'var(--sp-5)', fontSize: 14 }}>
+            <div style={{ background: 'var(--gray-100)', borderRadius: 8, padding: 'var(--sp-4)', marginBottom: 'var(--sp-4)', fontSize: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Services subtotal</span><span>{fmt(basePrice)}</span>
+                <span>{useCustomPrice && customPriceCents ? 'Your custom fee' : 'Services subtotal'}</span>
+                <span>{fmt(postedPrice)}</span>
               </div>
+              {useCustomPrice && customPriceCents && basePrice > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--gray-400)', marginTop: 4, fontSize: 12 }}>
+                  <span>Est. based on services</span><span>{fmt(basePrice)}</span>
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--gray-400)', marginTop: 4 }}>
                 <span>HST (13%)</span><span>+ {fmt(hst)}</span>
               </div>
@@ -442,6 +457,37 @@ export default function PostJob() {
               </div>
             </div>
           )}
+
+          <div style={{ marginBottom: 'var(--sp-4)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 14, padding: '4px 0' }}>
+              <input
+                type="checkbox"
+                checked={useCustomPrice}
+                onChange={e => { setUseCustomPrice(e.target.checked); if (!e.target.checked) setCustomPriceInput('') }}
+              />
+              <span style={{ fontWeight: 600 }}>Propose a different fee</span>
+            </label>
+            {useCustomPrice && (
+              <div style={{ marginTop: 8, paddingLeft: 26 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 16, fontWeight: 700 }}>$</span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    value={customPriceInput}
+                    onChange={e => setCustomPriceInput(e.target.value)}
+                    placeholder={basePrice > 0 ? (basePrice / 100).toFixed(2) : ''}
+                    style={{ width: 120, padding: '8px 10px', border: '2px solid var(--blue)', borderRadius: 8, fontSize: 15, fontWeight: 700 }}
+                    autoFocus
+                  />
+                  <span style={{ fontSize: 13, color: 'var(--gray-500)' }}>CAD (before HST)</span>
+                </div>
+                {errors.customPrice && <div className="error-text" style={{ marginTop: 4 }}>{errors.customPrice}</div>}
+              </div>
+            )}
+          </div>
+
           <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
             <button className="btn btn-ghost" onClick={() => setStep(1)}>← Back</button>
             <button className="btn btn-primary" style={{ flex: 1 }} onClick={nextStep2}>Next →</button>
@@ -503,7 +549,7 @@ export default function PostJob() {
             {form.notes && <div><strong>Notes:</strong> {form.notes}</div>}
           </div>
           <div style={{ background: 'var(--gray-100)', borderRadius: 8, padding: 'var(--sp-4)', marginBottom: 'var(--sp-5)', fontSize: 14 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}><span>Your opening offer</span><span>{fmt(basePrice)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}><span>Your opening offer</span><span>{fmt(postedPrice)}</span></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, color: 'var(--gray-500)' }}><span>HST (13%)</span><span>+ {fmt(hst)}</span></div>
             <div className="divider" style={{ margin: '8px 0' }} />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, marginBottom: 4 }}><span>Total charged</span><span style={{ color: 'var(--blue)' }}>{fmt(total)}</span></div>
