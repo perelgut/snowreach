@@ -122,10 +122,12 @@ public class AnalyticsService {
 
         log.info("Analytics pipeline: computing stats for {}", dateStr);
 
-        // ── 2. Completed jobs → revenue ───────────────────────────────────────
+        // ── 2. Released jobs → revenue ────────────────────────────────────────
+        // "completedAt" is never written by the state machine — the terminal
+        // "job done + paid" event is RELEASED, timestamped by releasedAt.
         QuerySnapshot completedSnap = firestore.collection(JOBS_COLLECTION)
-                .whereGreaterThanOrEqualTo("completedAt", tsStart)
-                .whereLessThan("completedAt", tsEnd)
+                .whereGreaterThanOrEqualTo("releasedAt", tsStart)
+                .whereLessThan("releasedAt", tsEnd)
                 .get().get();
 
         int  jobsCompleted     = 0;

@@ -111,7 +111,7 @@ const PURPLE = '#8E44AD'
 export default function Analytics() {
 
   const [fromDate, setFromDate] = useState(() => daysAgoISO(30))
-  const [toDate,   setToDate]   = useState(() => daysAgoISO(1))  // yesterday (latest analysed)
+  const [toDate,   setToDate]   = useState(() => daysAgoISO(0))  // today by default
 
   const [dailyStats,  setDailyStats]  = useState([])
   const [summary,     setSummary]     = useState(null)
@@ -177,7 +177,7 @@ export default function Analytics() {
     setRecomputing(true)
     setRecomputeError(null)
     try {
-      await api.recomputeAnalytics(daysAgoISO(1))
+      await api.recomputeAnalytics(toDate)
       fetchAnalytics()
     } catch (e) {
       setRecomputeError(e.response?.data?.message || e.message)
@@ -369,7 +369,7 @@ export default function Analytics() {
         <label style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--gray-600)' }}>
           To
           <input
-            type="date" value={toDate} min={fromDate} max={daysAgoISO(1)}
+            type="date" value={toDate} min={fromDate} max={daysAgoISO(0)}
             onChange={e => setToDate(e.target.value)}
             style={{ marginLeft: 'var(--sp-2)', padding: '6px 10px', borderRadius: 'var(--radius)',
                      border: '1px solid var(--gray-200)', fontSize: 'var(--text-sm)' }}
