@@ -97,6 +97,14 @@
         { "fieldPath": "raterRole",  "order": "ASCENDING" },
         { "fieldPath": "createdAt",  "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "roles",                    "arrayConfig": "CONTAINS"  },
+        { "fieldPath": "worker.completedJobCount", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
