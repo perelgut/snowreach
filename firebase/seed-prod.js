@@ -47,7 +47,11 @@ const PROD_PROJECT   = 'yosnowmow-prod';
 const WIPE_REQUESTED = process.argv.includes('--wipe');
 
 // Collections to wipe when --wipe is passed
-const COLLECTIONS_TO_WIPE = ['users', 'jobs', 'offers', 'ratings'];
+const COLLECTIONS_TO_WIPE = [
+  'users', 'jobs', 'jobOffers', 'ratings',
+  'notifications', 'analyticsDaily', 'analyticsSummary',
+  'disputes', 'geocache', 'auditLog',
+];
 
 // ── Credentials ───────────────────────────────────────────────────────────
 
@@ -176,6 +180,11 @@ const TEST_USERS = [
 
         backgroundCheckStatus: 'not_submitted',
         backgroundCheckDate:   null,
+
+        jobRejectionCount90d:  0,
+        isActive:              true,
+        onboardingCompletedAt: now,
+        insuranceStatus:       'not_submitted',
       },
     },
   },
@@ -256,6 +265,11 @@ const TEST_USERS = [
 
         backgroundCheckStatus: 'not_submitted',
         backgroundCheckDate:   null,
+
+        jobRejectionCount90d:  0,
+        isActive:              true,
+        onboardingCompletedAt: now,
+        insuranceStatus:       'not_submitted',
       },
     },
   },
@@ -336,6 +350,11 @@ const TEST_USERS = [
 
         backgroundCheckStatus: 'not_submitted',
         backgroundCheckDate:   null,
+
+        jobRejectionCount90d:  0,
+        isActive:              true,
+        onboardingCompletedAt: now,
+        insuranceStatus:       'not_submitted',
       },
     },
   },
@@ -416,6 +435,11 @@ const TEST_USERS = [
 
         backgroundCheckStatus: 'not_submitted',
         backgroundCheckDate:   null,
+
+        jobRejectionCount90d:  0,
+        isActive:              true,
+        onboardingCompletedAt: now,
+        insuranceStatus:       'not_submitted',
       },
     },
   },
@@ -540,7 +564,7 @@ async function seedUser(def) {
 
   // ── Step 3: write Firestore document ──────────────────────────────────
   await db.collection('users').doc(uid).set(
-    { ...def.firestoreDoc, uid },
+    { ...def.firestoreDoc, uid, email: def.email },
     { merge: true },
   );
   console.log(`  [FIRESTORE] users/${uid} written`);
