@@ -5018,6 +5018,34 @@ These are no-ops: the job is already RELEASED by the time `releasePayment` is ca
 
 ---
 
+## 2026-04-28 — Fix: Recompute Yesterday 500 — missing Firestore composite index on ratings
+
+### Problem
+
+`POST /api/admin/analytics/recompute` returned 500. Cloud Run log:
+
+```
+FAILED_PRECONDITION: The query requires an index.
+  at AnalyticsService.computeDailyStats(AnalyticsService.java:166)
+```
+
+`AnalyticsService.computeDailyStats` queries the `ratings` collection filtered by `raterRole` and ordered by `createdAt`. Firestore requires a composite index for this combination; it had never been created in the production project.
+
+### Fix
+
+Created the missing index via the Firebase console link embedded in the error message:
+`ratings` collection, fields `raterRole ASC, createdAt ASC`.
+
+Added the index definition to `firebase/firestore.indexes.json` so it is tracked in source control and will be documented for any future environment setup.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `firebase/firestore.indexes.json` | Added `ratings(raterRole ASC, createdAt ASC)` composite index |
+
+---
+
 ## 2026-04-27 — Feature: "Recompute Yesterday" button on Admin Analytics
 
 ### Problem diagnosed
