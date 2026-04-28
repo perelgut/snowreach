@@ -5018,6 +5018,34 @@ These are no-ops: the job is already RELEASED by the time `releasePayment` is ca
 
 ---
 
+## 2026-04-28 — Fix: Analytics shows 0 jobs — completedAt never written by state machine
+
+### Problem
+
+After Recompute ran successfully (HTTP 200), the Analytics page still showed "Total Jobs (All Time): 0". Cloud Run log confirmed: `Analytics daily doc written: date=2026-04-27 completed=0 grossCents=0`.
+
+Root cause: `AnalyticsService.computeDailyStats` queried jobs by `completedAt` (the old COMPLETE state timestamp), but the state machine was redesigned — the job-done event is now `PENDING_APPROVAL`, setting `pendingApprovalAt`, and the payment event is `RELEASED`, setting `releasedAt`. `completedAt` is never written anywhere, so the query always returned 0 documents.
+
+Secondary issue: the jobs from the April 28 beta test were released today, not yesterday. The "Recompute Yesterday" button hardcoded `daysAgoISO(1)` (April 27), so even with the correct field it would have missed today's jobs. The "To" date picker was also capped at yesterday.
+
+### Fix
+
+**`AnalyticsService.java`** — changed the completed-jobs query from `completedAt` range to `releasedAt` range. RELEASED is the correct "job done + paid" event.
+
+**`Analytics.jsx`** — two changes:
+- Default `toDate` is now today (`daysAgoISO(0)`) instead of yesterday
+- `toDate` picker `max` is now today instead of yesterday
+- Recompute button sends `toDate` (current picker value) instead of hardcoded `daysAgoISO(1)`
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `backend/src/main/java/com/yosnowmow/service/AnalyticsService.java` | Query `releasedAt` instead of `completedAt` |
+| `frontend/src/pages/admin/Analytics.jsx` | Default `toDate` = today; allow today in picker; recompute uses `toDate` |
+
+---
+
 ## 2026-04-28 — Fix: Recompute Yesterday 500 — missing Firestore composite index on ratings
 
 ### Problem
