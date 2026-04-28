@@ -5195,3 +5195,34 @@ The fallback `?? offer.workerPriceCents` is defensive; in practice `requesterPri
 | File | Change |
 |---|---|
 | `frontend/src/pages/worker/JobRequest.jsx` | `onCounter` prop now passes `offer.requesterPriceCents` as the reference price to the counter modal |
+
+---
+
+## 2026-04-28 — Fix: OpportunityCard shows Accept/Counter for stale notifications on settled jobs
+
+### Problem
+
+Notifications are sent to Workers when a job is posted. These notifications persist in the Worker's feed until marked read. If the job later moves to a terminal state (SETTLED, RELEASED, CANCELLED, etc.) without the worker acting on the notification, the notification-based `OpportunityCard` still showed full Accept/Counter buttons. Clicking Accept triggered `workerSubmitOffer` on the backend, which rejected the action with HTTP 409 "Job is not accepting offers (status: SETTLED)".
+
+The browsable "Available Jobs" section is not affected — it queries Firestore directly for `status == POSTED`, so stale jobs never appear there. Only the notification-based cards are exposed to this race.
+
+### Fix
+
+Added `OFFER_OPEN_STATUSES = new Set(['POSTED', 'NEGOTIATING'])` constant.
+
+`OpportunityCard` now derives `isOpen` from the loaded job:
+- `job == null` (still loading) or `job._error` → optimistically `isOpen = true` (buttons shown; failure would have shown before if job is gone)
+- `job.status` in `OFFER_OPEN_STATUSES` → `isOpen = true`
+- `job.status` anything else → `isOpen = false`
+
+When `isOpen = false`:
+- Card border and label colour switch to grey
+- Label reads "Job no longer available" instead of "🔔 New Job Nearby"
+- Price, address note, and action buttons are hidden
+- A single line "This job has been filled or cancelled." is shown
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `frontend/src/pages/worker/JobRequest.jsx` | `OpportunityCard` checks `job.status` against `OFFER_OPEN_STATUSES`; hides buttons and shows "no longer available" state for settled/cancelled/agreed jobs |

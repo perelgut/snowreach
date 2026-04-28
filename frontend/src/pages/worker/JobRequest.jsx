@@ -403,25 +403,31 @@ export default function JobRequest() {
 /**
  * Card for a new job opportunity (no offer submitted yet).
  */
+// Job statuses that still accept new offers from workers
+const OFFER_OPEN_STATUSES = new Set(['POSTED', 'NEGOTIATING'])
+
 function OpportunityCard({ notif, job, submitting, onAccept, onCounter }) {
   const postedCents = notif.data?.price ? parseInt(notif.data.price) : null
-  const hasJob = job && !job._error
+  const hasJob      = job && !job._error
+  // Once the job is loaded, check whether it's still accepting offers.
+  // While loading (job == null) we optimistically show buttons; on error we also show them.
+  const isOpen      = !hasJob || OFFER_OPEN_STATUSES.has(job.status)
 
   return (
-    <div className="card" style={{ marginBottom: 'var(--sp-4)', borderLeft: '4px solid var(--blue)' }}>
+    <div className="card" style={{ marginBottom: 'var(--sp-4)', borderLeft: `4px solid ${isOpen ? 'var(--blue)' : 'var(--gray-300)'}` }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--sp-3)' }}>
         <div>
-          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--blue)', textTransform: 'uppercase', letterSpacing: .5 }}>
-            🔔 New Job Nearby
+          <span style={{ fontSize: 11, fontWeight: 700, color: isOpen ? 'var(--blue)' : 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: .5 }}>
+            {isOpen ? '🔔 New Job Nearby' : 'Job no longer available'}
           </span>
           <h3 style={{ fontWeight: 700, fontSize: 15, marginTop: 4 }}>
             {hasJob ? fmtScope(job.scope) : 'Snow clearing nearby'}
           </h3>
-          {hasJob && job.notesForWorker && (
+          {hasJob && job.notesForWorker && isOpen && (
             <p style={{ fontSize: 13, color: 'var(--gray-500)', marginTop: 4 }}>{job.notesForWorker}</p>
           )}
         </div>
-        {postedCents != null && (
+        {postedCents != null && isOpen && (
           <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 'var(--sp-4)' }}>
             <div style={{ fontSize: 11, color: 'var(--gray-400)', fontWeight: 600 }}>Posted price</div>
             <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--green)' }}>{fmtCAD(postedCents)}</div>
@@ -429,29 +435,36 @@ function OpportunityCard({ notif, job, submitting, onAccept, onCounter }) {
         )}
       </div>
 
-      {/* Address hidden until ESCROW_HELD — show area note */}
-      <p style={{ fontSize: 12, color: 'var(--gray-400)', marginBottom: 'var(--sp-4)' }}>
-        📍 Address revealed once your offer is agreed and escrow is paid
-      </p>
-
-      <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
-        <button
-          className="btn btn-ghost"
-          onClick={onCounter}
-          disabled={submitting}
-          style={{ flex: '0 0 auto' }}
-        >
-          Counter
-        </button>
-        <button
-          className="btn btn-primary"
-          onClick={onAccept}
-          disabled={submitting || postedCents == null}
-          style={{ flex: 1 }}
-        >
-          {submitting ? 'Submitting…' : `✓ Accept ${postedCents != null ? fmtCAD(postedCents) : ''}`}
-        </button>
-      </div>
+      {isOpen ? (
+        <>
+          {/* Address hidden until ESCROW_HELD — show area note */}
+          <p style={{ fontSize: 12, color: 'var(--gray-400)', marginBottom: 'var(--sp-4)' }}>
+            📍 Address revealed once your offer is agreed and escrow is paid
+          </p>
+          <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+            <button
+              className="btn btn-ghost"
+              onClick={onCounter}
+              disabled={submitting}
+              style={{ flex: '0 0 auto' }}
+            >
+              Counter
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={onAccept}
+              disabled={submitting || postedCents == null}
+              style={{ flex: 1 }}
+            >
+              {submitting ? 'Submitting…' : `✓ Accept ${postedCents != null ? fmtCAD(postedCents) : ''}`}
+            </button>
+          </div>
+        </>
+      ) : (
+        <p style={{ fontSize: 13, color: 'var(--gray-400)' }}>
+          This job has been filled or cancelled.
+        </p>
+      )}
     </div>
   )
 }
