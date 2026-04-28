@@ -27,6 +27,7 @@ import com.yosnowmow.model.User;
 import com.yosnowmow.scheduler.AutoUnsuspendJob;
 import com.yosnowmow.security.AuthenticatedUser;
 import com.yosnowmow.security.RequiresRole;
+import com.yosnowmow.service.AnalyticsService;
 import com.yosnowmow.service.BackgroundCheckService;
 import com.yosnowmow.service.BadgeService;
 import com.yosnowmow.service.FraudDetectionService;
@@ -144,6 +145,7 @@ public class AdminController {
     private final FraudDetectionService   fraudDetectionService;
     private final UserService             userService;
     private final AuditLogService         auditLogService;
+    private final AnalyticsService        analyticsService;
     private final Scheduler               quartzScheduler;
 
     /** Statuses considered "open" — jobs in these states will be cancelled when banning. */
@@ -160,6 +162,7 @@ public class AdminController {
                            FraudDetectionService fraudDetectionService,
                            UserService userService,
                            AuditLogService auditLogService,
+                           AnalyticsService analyticsService,
                            Scheduler quartzScheduler) {
         this.firestore              = firestore;
         this.firebaseAuth           = firebaseAuth;
@@ -171,6 +174,7 @@ public class AdminController {
         this.fraudDetectionService  = fraudDetectionService;
         this.userService            = userService;
         this.auditLogService        = auditLogService;
+        this.analyticsService       = analyticsService;
         this.quartzScheduler        = quartzScheduler;
     }
 
@@ -518,6 +522,38 @@ public class AdminController {
         response.put("summary", summary);
 
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Triggers an immediate recompute of the daily analytics aggregate for the given date.
+     *
+     * <p>Useful when the nightly Quartz job did not run (e.g., Cloud Run scaled to zero).
+     * Idempotent — safe to call multiple times for the same date.
+     *
+     * @param date target date {@code YYYY-MM-DD}; defaults to yesterday (Ontario time) if omitted
+     * @return HTTP 200 on success
+     */
+    @RequiresRole("admin")
+    @PostMapping("/analytics/recompute")
+    public ResponseEntity<Void> recomputeAnalytics(
+            @RequestParam(required = false) String date)
+            throws InterruptedException, ExecutionException {
+
+        LocalDate target;
+        if (date == null || date.isBlank()) {
+            target = LocalDate.now(ONTARIO_ZONE).minusDays(1);
+        } else {
+            try {
+                target = LocalDate.parse(date);
+            } catch (Exception e) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Invalid date format; expected YYYY-MM-DD");
+            }
+        }
+
+        log.info("Admin triggered analytics recompute for date={}", target);
+        analyticsService.computeDailyStats(target);
+        return ResponseEntity.ok().build();
     }
 
     /**

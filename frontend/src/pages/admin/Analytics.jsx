@@ -119,8 +119,10 @@ export default function Analytics() {
 
   const [loading,     setLoading]     = useState(false)
   const [error,       setError]       = useState(null)
-  const [exportError, setExportError] = useState(null)
-  const [exporting,   setExporting]   = useState(false)
+  const [exportError,    setExportError]    = useState(null)
+  const [exporting,      setExporting]      = useState(false)
+  const [recomputing,    setRecomputing]    = useState(false)
+  const [recomputeError, setRecomputeError] = useState(null)
 
   // ── Data fetching ───────────────────────────────────────────────────────────
 
@@ -166,6 +168,21 @@ export default function Analytics() {
         : (e.response?.data?.message || e.message))
     } finally {
       setExporting(false)
+    }
+  }
+
+  // ── Recompute handler ───────────────────────────────────────────────────────
+
+  async function handleRecompute() {
+    setRecomputing(true)
+    setRecomputeError(null)
+    try {
+      await api.recomputeAnalytics(daysAgoISO(1))
+      fetchAnalytics()
+    } catch (e) {
+      setRecomputeError(e.response?.data?.message || e.message)
+    } finally {
+      setRecomputing(false)
     }
   }
 
@@ -285,20 +302,45 @@ export default function Analytics() {
           Analytics
         </h1>
 
-        {/* Export button */}
-        <button
-          onClick={handleExport}
-          disabled={exporting}
-          style={{
-            padding: '8px 18px', borderRadius: 'var(--radius)', border: '1px solid var(--gray-200)',
-            background: '#fff', cursor: exporting ? 'default' : 'pointer',
-            fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--gray-600)',
-            opacity: exporting ? .6 : 1,
-          }}
-        >
-          {exporting ? 'Exporting…' : '⬇ Export CSV'}
-        </button>
+        <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+          {/* Recompute button */}
+          <button
+            onClick={handleRecompute}
+            disabled={recomputing}
+            style={{
+              padding: '8px 18px', borderRadius: 'var(--radius)', border: '1px solid var(--gray-200)',
+              background: '#fff', cursor: recomputing ? 'default' : 'pointer',
+              fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--gray-600)',
+              opacity: recomputing ? .6 : 1,
+            }}
+          >
+            {recomputing ? 'Recomputing…' : '↺ Recompute Yesterday'}
+          </button>
+
+          {/* Export button */}
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            style={{
+              padding: '8px 18px', borderRadius: 'var(--radius)', border: '1px solid var(--gray-200)',
+              background: '#fff', cursor: exporting ? 'default' : 'pointer',
+              fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--gray-600)',
+              opacity: exporting ? .6 : 1,
+            }}
+          >
+            {exporting ? 'Exporting…' : '⬇ Export CSV'}
+          </button>
+        </div>
       </div>
+
+      {/* Recompute error */}
+      {recomputeError && (
+        <div style={{ marginBottom: 'var(--sp-4)', padding: 'var(--sp-3) var(--sp-4)',
+                      background: 'var(--red-bg)', color: 'var(--red)',
+                      borderRadius: 'var(--radius)', fontSize: 'var(--text-sm)' }}>
+          {recomputeError}
+        </div>
+      )}
 
       {/* Export error */}
       {exportError && (

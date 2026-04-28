@@ -5018,6 +5018,46 @@ These are no-ops: the job is already RELEASED by the time `releasePayment` is ca
 
 ---
 
+## 2026-04-27 — Feature: "Recompute Yesterday" button on Admin Analytics
+
+### Problem diagnosed
+
+Admin opened the Analytics page and saw nothing — no charts, no summary numbers — despite three terminal jobs in Firestore (RELEASED, SETTLED, CANCELLED). Root cause: the `AnalyticsJob` Quartz cron fires at `0 0 3 * * ?` (3 AM Ontario time), but Cloud Run scales to zero when idle, so the JVM is asleep at 3 AM and the job never fires. No analytics documents means nothing to show. Secondary note: even on a live instance, the job only processes the *previous* day's data, so today's jobs would not appear until tomorrow's 3 AM run.
+
+### Fix
+
+Added an admin-triggered endpoint to run the analytics aggregation on demand.
+
+**Backend — `AdminController.java`**
+
+- Injected `AnalyticsService` (import, field, constructor parameter, constructor assignment).
+- New endpoint: `POST /api/admin/analytics/recompute?date=YYYY-MM-DD` (admin-only, `@RequiresRole("admin")`). Defaults to yesterday (Ontario time) when `date` is omitted. Delegates to the existing `analyticsService.computeDailyStats(LocalDate)`. Idempotent — safe to call multiple times.
+
+**Frontend — `frontend/src/services/api.js`**
+
+- Added `recomputeAnalytics(date)` export that calls `POST /api/admin/analytics/recompute` with the date as a query param.
+
+**Frontend — `frontend/src/pages/admin/Analytics.jsx`**
+
+- Added `recomputing` and `recomputeError` state variables.
+- Added `handleRecompute()` async handler: calls `api.recomputeAnalytics(daysAgoISO(1))`, then immediately calls `fetchAnalytics()` to refresh the charts.
+- Added "↺ Recompute Yesterday" button in the page header, alongside the existing "⬇ Export CSV" button (both wrapped in a flex `div`).
+- Added recompute error banner above the existing export error banner.
+
+### Long-term note
+
+Setting Cloud Run `--min-instances=1` would prevent scale-to-zero and let the 3 AM Quartz job fire reliably. The manual button is an immediate operational fix; min-instances is the permanent solution if analytics freshness matters.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `backend/src/main/java/com/yosnowmow/controller/AdminController.java` | Injected `AnalyticsService`; added `POST /analytics/recompute` endpoint |
+| `frontend/src/services/api.js` | Added `recomputeAnalytics(date)` export |
+| `frontend/src/pages/admin/Analytics.jsx` | Added recompute state, handler, button, and error banner |
+
+---
+
 ## 2026-04-27 — Fix: Rating/comment not visible when clicking "Your Worker"
 
 ### Problem

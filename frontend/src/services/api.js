@@ -391,6 +391,15 @@ export const getTopWorkers = (size = 10) =>
   api.get('/api/admin/workers', { params: { size } }).then(r => r.data)
 
 /**
+ * Trigger an immediate recompute of daily analytics for the given date (admin only).
+ * Useful when the nightly Quartz job did not fire (Cloud Run scaled to zero).
+ * @param {string} date  YYYY-MM-DD (defaults to yesterday on the backend if omitted)
+ * @returns {Promise<void>}
+ */
+export const recomputeAnalytics = (date) =>
+  api.post('/api/admin/analytics/recompute', null, { params: { date } }).then(r => r.data)
+
+/**
  * Download a transaction export CSV for the given date range (P3-07).
  * Returns a Blob; the caller is responsible for triggering the browser download.
  * @param {string} from  start date, YYYY-MM-DD
